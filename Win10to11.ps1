@@ -3,7 +3,8 @@ param(
     [string]$TargetDriveLetter = "",
     [switch]$SkipElevation,
     [switch]$AutoLaunch,
-    [switch]$BypassAll
+    [switch]$BypassAll,
+    [switch]$SkipHealthChecks
 )
 <#
 .SYNOPSIS
@@ -27,6 +28,7 @@ if (-not $SkipElevation) {
         if ($TargetDriveLetter) { $argList += " -TargetDriveLetter `"$TargetDriveLetter`"" }
         if ($AutoLaunch) { $argList += " -AutoLaunch" }
         if ($BypassAll) { $argList += " -BypassAll" }
+        if ($SkipHealthChecks) { $argList += " -SkipHealthChecks" }
         Start-Process -FilePath $powershellExe -ArgumentList $argList -Verb RunAs;
         exit;
     }
@@ -171,10 +173,21 @@ function Get-MountedSetupDrive {
     $isoCandidates = @(
         "N:\_ISO\Windows\Win11\Win11.iso",
         "$ScriptDir\..\_ISO\Windows\Win11\Win11.iso",
-        "$ScriptDir\_ISO\Windows\Win11\Win11.iso"
+        "$ScriptDir\_ISO\Windows\Win11\Win11.iso",
+        "C:\Users\jdavi\Documents\MEGA downloads\Win11_23H2_English_x64 (Older PC Copy - 2026-09-05).iso"
     )
     foreach ($drive in $drives) {
         $isoCandidates += "$($drive.Name):\_ISO\Windows\Win11\Win11.iso"
+    }
+    $searchDirs = @(
+        "$env:USERPROFILE\Documents\MEGA downloads",
+        "$env:USERPROFILE\Downloads",
+        "$ScriptDir"
+    )
+    foreach ($sd in $searchDirs) {
+        if (Test-Path $sd) {
+            $isoCandidates += @(Get-ChildItem -Path $sd -Filter "*Win11*.iso" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+        }
     }
 
     $foundIso = $null
@@ -546,20 +559,16 @@ if ($ResumeStep -le $StepNum) {
                 $regLoad = cmd.exe /c "reg load HKLM\OfflineSYSTEM `"$sysHive`" " 2>&1
                 
                 # MoSetup Key
-                $MoSetupPath = "HKLM:\OfflineSYSTEM\Setup\MoSetup";
-                if (-not (Test-Path $MoSetupPath)) { New-Item -Path $MoSetupPath -Force | Out-Null };
-                Set-ItemProperty -Path $MoSetupPath -Name "AllowUpgradesWithUnsupportedTPMOrCPU" -Value 1 -Type DWord -Force;
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\Setup\MoSetup`" /v AllowUpgradesWithUnsupportedTPMOrCPU /t REG_DWORD /d 1 /f 2>&1" | Out-Null
                 
                 # Full LabConfig Keys
-                $LabConfigPath = "HKLM:\OfflineSYSTEM\Setup\LabConfig";
-                if (-not (Test-Path $LabConfigPath)) { New-Item -Path $LabConfigPath -Force | Out-Null };
-                Set-ItemProperty -Path $LabConfigPath -Name "BypassTPMCheck" -Value 1 -Type DWord -Force;
-                Set-ItemProperty -Path $LabConfigPath -Name "BypassSecureBootCheck" -Value 1 -Type DWord -Force;
-                Set-ItemProperty -Path $LabConfigPath -Name "BypassRAMCheck" -Value 1 -Type DWord -Force;
-                Set-ItemProperty -Path $LabConfigPath -Name "BypassCPUCheck" -Value 1 -Type DWord -Force;
-                Set-ItemProperty -Path $LabConfigPath -Name "BypassStorageCheck" -Value 1 -Type DWord -Force;
-                Set-ItemProperty -Path $LabConfigPath -Name "BypassDiskCheck" -Value 1 -Type DWord -Force;
-                Set-ItemProperty -Path $LabConfigPath -Name "BypassNRO" -Value 1 -Type DWord -Force;
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\Setup\LabConfig`" /v BypassTPMCheck /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\Setup\LabConfig`" /v BypassSecureBootCheck /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\Setup\LabConfig`" /v BypassRAMCheck /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\Setup\LabConfig`" /v BypassCPUCheck /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\Setup\LabConfig`" /v BypassStorageCheck /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\Setup\LabConfig`" /v BypassDiskCheck /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\Setup\LabConfig`" /v BypassNRO /t REG_DWORD /d 1 /f 2>&1" | Out-Null
 
                 cmd.exe /c "reg unload HKLM\OfflineSYSTEM" 2>&1 | Out-Null
                 Write-Log "  [OK] Successfully injected complete Windows 11 hardware bypass suite (MoSetup & LabConfig) into offline target drive." "SUCCESS" Green;
@@ -624,7 +633,7 @@ if ($ResumeStep -le $StepNum) {
     Step-Progress "Cleaning up stale upgrade setup cache folders...";
     Write-Host "  (Controls: Press [S] to Skip, [P] to Pause, [Q] to Quit)" -ForegroundColor Gray
     
-    $cachePaths = @("$TargetDrive\`$WINDOWS.~BT", "$TargetDrive\`$SysReset", "$TargetDrive\`$Windows.~WS");
+    $cachePaths = @("$TargetDrive\`$WINDOWS.~BT", "$TargetDrive\`$GetCurrent", "$TargetDrive\`$SysReset", "$TargetDrive\`$Windows.~WS", "$TargetDrive\`$WinREAgent");
     
     foreach ($path in $cachePaths) {
         $action = Check-KeyboardAction
@@ -1394,11 +1403,15 @@ if ($ResumeStep -le $StepNum) {
             Write-Log "  [ACTION] Extracting fresh Windows 11 Winre.wim from ISO..." "INFO" Yellow
             $isoDrive = Get-MountedSetupDrive
             if (-not $isoDrive) {
-                Write-Host "`n[ACTION REQUIRED] No Windows 11 ISO detected." -ForegroundColor Magenta;
-                Write-Host "Please place Win11.iso at N:\_ISO\Windows\Win11\Win11.iso or mount it." -ForegroundColor Magenta;
-                Write-Host "Press any key once the ISO is available..." -ForegroundColor Magenta;
-                $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown');
-                $isoDrive = Get-MountedSetupDrive
+                if ($BypassAll) {
+                    Write-Log "  [-BypassAll active] No ISO detected. Proceeding without fresh ISO WinRE extraction." "INFO" Yellow;
+                } else {
+                    Write-Host "`n[ACTION REQUIRED] No Windows 11 ISO detected." -ForegroundColor Magenta;
+                    Write-Host "Please place Win11.iso at N:\_ISO\Windows\Win11\Win11.iso or mount it." -ForegroundColor Magenta;
+                    Write-Host "Press any key once the ISO is available..." -ForegroundColor Magenta;
+                    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown');
+                    $isoDrive = Get-MountedSetupDrive;
+                }
             }
             if ($isoDrive) {
                 $extracted = Extract-WinREFromISO -TargetRecoveryPath $recoveryPath -IsoDriveLetter $isoDrive
@@ -1486,12 +1499,133 @@ if ($ResumeStep -le $StepNum) {
     Step-Progress "Checking for Third-Party Antivirus...";
     try {
         if ($IsOffline) {
-            Write-Log "  [WARNING] Offline installation selected. Cannot actively query for running Antivirus." "WARN" Yellow;
-            Write-Host "`n>>> OFFLINE AV WARNING <<<" -ForegroundColor Yellow;
-            Write-Host "Please ensure you have UNINSTALLED third-party antivirus from this drive before attempting the upgrade." -ForegroundColor Yellow;
-            Write-Log "  [OK] Bypassed AV check for offline drive." "SUCCESS" Green;
+            Write-Log "  [ACTION] Scanning offline target for third-party Antivirus and filesystem filter drivers..." "INFO" Cyan;
+            
+            # 1. Check directories
+            $avDirs = @(
+                "$TargetDrive\Program Files\AVAST Software",
+                "${TargetDrive}\Program Files (x86)\AVAST Software",
+                "$TargetDrive\ProgramData\AVAST Software",
+                "$TargetDrive\Program Files\AVG",
+                "${TargetDrive}\Program Files (x86)\AVG",
+                "$TargetDrive\ProgramData\Avg",
+                "$TargetDrive\Program Files\Norton Security",
+                "$TargetDrive\Program Files\McAfee",
+                "$TargetDrive\Program Files\Malwarebytes"
+            );
+            $foundAvDirs = @($avDirs | Where-Object { Test-Path $_ });
+            if ($foundAvDirs.Count -gt 0) {
+                foreach ($d in $foundAvDirs) {
+                    Write-Log "  [WARNING] Found offline AV installation directory: $d" "WARN" Magenta;
+                }
+            }
+
+            # 2. Check drivers in System32\drivers (e.g. asw*.sys)
+            $driverDir = "$TargetDrive\Windows\System32\drivers";
+            $fltDrivers = @();
+            if (Test-Path $driverDir) {
+                $fltDrivers = @(Get-ChildItem -Path $driverDir -Filter "asw*.sys" -ErrorAction SilentlyContinue);
+            }
+
+            # 3. Check offline SYSTEM hive for active AV services
+            $sysHive = "$TargetDrive\Windows\System32\config\SYSTEM";
+            $avServicesFound = @();
+            if (Test-Path $sysHive) {
+                cmd.exe /c "reg.exe load HKLM\OfflineSYSTEM `"$sysHive`" 2>&1" | Out-Null;
+                try {
+                    $servicesKey = "HKLM:\OfflineSYSTEM\ControlSet001\Services";
+                    if (Test-Path $servicesKey) {
+                        $avServicesFound = @(Get-ChildItem -Path $servicesKey | Where-Object {
+                            $_.PSChildName -match "^asw|^avast|^avg"
+                        });
+                    }
+                } finally {
+                    cmd.exe /c "reg.exe unload HKLM\OfflineSYSTEM 2>&1" | Out-Null;
+                }
+            }
+
+            if ($avServicesFound.Count -gt 0 -or $fltDrivers.Count -gt 0 -or $foundAvDirs.Count -gt 0) {
+                Write-Host "`n>>> OFFLINE ANTIVIRUS / FILTER DRIVERS DETECTED <<<" -ForegroundColor Red;
+                Write-Host "Avast/AVG filesystem minifilter drivers (aswMonFlt, aswSP, etc.) are installed on this drive." -ForegroundColor Yellow;
+                Write-Host "These filter drivers block Windows Setup offline hive mounting and cause errors 0x801F0005 and 0x80070714!" -ForegroundColor Yellow;
+                Write-Host "";
+                
+                $disableConfirm = $true;
+                if (-not $BypassAll) {
+                    $ans = Read-Host "Do you want to neutralize / disable these offline AV filter drivers to allow the upgrade? (Y/N)";
+                    if ($ans -notmatch "^[Yy]") { $disableConfirm = $false };
+                }
+
+                    if ($disableConfirm) {
+                    Write-Log "  [ACTION] Disabling offline AV and legacy filter services via reg.exe..." "INFO" Yellow;
+                    $loadRes = cmd.exe /c "reg.exe load HKLM\OfflineSYSTEM `"$sysHive`" 2>&1"
+                    try {
+                        # 1. Disable all discovered Avast/AVG services directly with reg.exe (Start=4)
+                        $knownAvServices = @("aswArDisk", "aswArPot", "aswbdisk", "aswbIDSAgent", "aswbidsdriver", "aswbidsh", "aswbuniv", "aswDrvBrg", "aswElam", "aswKbd", "aswMonFlt", "aswNetHub", "aswNetNd6", "aswRdr", "aswRvrt", "aswSnx", "aswSP", "aswStm", "aswVmm", "AvastWscReporter");
+                        foreach ($svc in $knownAvServices) {
+                            cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Services\$svc`" /v Start /t REG_DWORD /d 4 /f 2>&1" | Out-Null;
+                            Write-Log "    Disabled service: $svc (Start=4)" "INFO" Gray;
+                        }
+                        
+                        # 2. Remove Minifilter Instances from registry so Filter Manager ignores them
+                        cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\aswMonFlt\Instances`" /f 2>&1" | Out-Null;
+                        cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\aswSP\Instances`" /f 2>&1" | Out-Null;
+                        cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\aswSnx\Instances`" /f 2>&1" | Out-Null;
+                        Write-Log "    Removed Filter Manager Instances for aswMonFlt, aswSP, aswSnx" "SUCCESS" Green;
+
+                        # 3. Clean Class UpperFilters (DiskDrive and Keyboard)
+                        cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}`" /v UpperFilters /t REG_MULTI_SZ /d `"partmgr`" /f 2>&1" | Out-Null;
+                        Write-Log "    Cleaned DiskDrive UpperFilters -> partmgr" "SUCCESS" Green;
+                        cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Control\Class\{4d36e96b-e325-11ce-bfc1-08002be10318}`" /v UpperFilters /t REG_MULTI_SZ /d `"kbdclass`" /f 2>&1" | Out-Null;
+                        Write-Log "    Cleaned Keyboard UpperFilters -> kbdclass" "SUCCESS" Green;
+
+                        # 4. Disable legacy SQL Server 2008 FILESTREAM driver (RsFx0105)
+                        cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Services\RsFx0105`" /v Start /t REG_DWORD /d 4 /f 2>&1" | Out-Null;
+                        cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\RsFx0105\Instances`" /f 2>&1" | Out-Null;
+                        Write-Log "    Disabled legacy SQL Server FILESTREAM filter RsFx0105 (Start=4)" "SUCCESS" Green;
+                    } finally {
+                        cmd.exe /c "reg.exe unload HKLM\OfflineSYSTEM 2>&1" | Out-Null;
+                    }
+
+                    # Rename the critical minifilter driver files so they cannot hook the filesystem
+                    $criticalDrivers = @("aswMonFlt.sys", "aswSP.sys", "aswbidsdriver.sys", "aswRvrt.sys", "aswSnx.sys", "aswNetNd6.sys", "RsFx0105.sys");
+                    foreach ($cd in $criticalDrivers) {
+                        $cdPath = Join-Path $driverDir $cd;
+                        if (Test-Path $cdPath) {
+                            try {
+                                Rename-Item -Path $cdPath -NewName "$cd.disabled" -Force -ErrorAction Stop;
+                                Write-Log "    Renamed driver: $cd -> $cd.disabled" "SUCCESS" Green;
+                            } catch {
+                                Write-Log "    Could not rename ${cd}: $_" "WARN" Yellow;
+                            }
+                        }
+                    }
+
+                    # Quarantine any leftover asw*.tmp and asw*.backup driver remnants
+                    $quarDir = Join-Path $driverDir "Avast_Quarantine";
+                    $remnants = @(Get-ChildItem -Path $driverDir | Where-Object { $_.Name -match "^asw.*(\.tmp|\.backup|\.sum)$" });
+                    if ($remnants.Count -gt 0) {
+                        if (-not (Test-Path $quarDir)) { New-Item -ItemType Directory -Path $quarDir -Force | Out-Null };
+                        foreach ($rem in $remnants) {
+                            Move-Item -Path $rem.FullName -Destination $quarDir -Force -ErrorAction SilentlyContinue;
+                        }
+                        Write-Log "    Quarantined $($remnants.Count) Avast temporary/backup driver files." "INFO" Gray;
+                    }
+
+                    # Remove Avast driver package from offline DriverStore
+                    cmd.exe /c "dism.exe /Image:`"$TargetDrive\`" /Remove-Driver /Driver:oem76.inf 2>&1" | Out-Null;
+
+                    Write-Log "  [SUCCESS] Offline AV & legacy filter drivers neutralized. Setup will not be blocked by 0x801F0005." "SUCCESS" Green;
+                } else {
+                    Write-Log "  [WARNING] Offline AV filter drivers remain active. Upgrade is highly likely to fail." "WARN" Red;
+                    $ReadinessScore -= 30;
+                }
+            } else {
+                Write-Log "  [OK] No active offline third-party AV filter drivers found." "SUCCESS" Green;
+            }
         } else {
-            $avInfo = Get-CimInstance -Namespace "root\SecurityCenter2" -Class AntiVirusProduct -ErrorAction Stop | Where-Object { $_.displayName -notmatch "Windows Defender" };
+            # Online AV & Filter Driver Check
+            $avInfo = Get-CimInstance -Namespace "root\SecurityCenter2" -Class AntiVirusProduct -ErrorAction SilentlyContinue | Where-Object { $_.displayName -notmatch "Windows Defender" };
             if ($avInfo) {
                 foreach ($av in $avInfo) {
                     Write-Log "  [WARNING] Third-party AV detected: $($av.displayName)" "WARN" Magenta;
@@ -1505,28 +1639,37 @@ if ($ResumeStep -le $StepNum) {
                 } else {
                     $avConfirm = Read-Host "Type 'Y' and press Enter once you have disabled/uninstalled it";
                 }
-                
-                Write-Log "  Verifying AV processes are stopped in memory..." "INFO" Gray;
-                
-                # Array of known background service processes for major AVs
-                $knownAvProcs = @("ccsvchst", "nortonsecurity", "mbam", "mbamservice", "mcshield", "mfevtps", "avp", "bdservicehost", "avg", "avast");
-                $runningAv = Get-Process | Where-Object { $knownAvProcs -contains $_.Name.ToLower() -or $_.Name -match "(?i)(norton|malwarebytes|mcafee|kaspersky|bitdefender|avast|avg|sophos)" };
-                
-                if ($runningAv) {
-                    foreach ($proc in $runningAv) {
-                        Write-Log "  [CRITICAL] Found running AV process: $($proc.Name) (ID: $($proc.Id))" "ERROR" Red;
-                    }
-                    Write-Log "  [CRITICAL] Antivirus is STILL RUNNING in memory! The upgrade is highly likely to fail." "ERROR" Red;
-                    $ReadinessScore -= 40;
-                } else {
-                    Write-Log "  [OK] AV background processes appear to be successfully disabled." "SUCCESS" Green;
+            }
+
+            # Check for active kernel minifilters in memory via fltmc
+            Write-Log "  Auditing active filesystem minifilter drivers (fltmc)..." "INFO" Gray;
+            $fltOut = cmd.exe /c "fltmc filters 2>&1" | Out-String;
+            $activeRogueFilters = @("aswMonFlt", "aswSP", "aswSnx", "RsFx0105") | Where-Object { $fltOut -match $_ };
+            if ($activeRogueFilters.Count -gt 0) {
+                foreach ($rf in $activeRogueFilters) {
+                    Write-Log "  [CRITICAL] Active filter driver detected in memory: $rf" "ERROR" Red;
+                    Write-Log "  [ACTION] Unloading filter $rf to prevent 0x801F0005..." "INFO" Yellow;
+                    cmd.exe /c "fltmc unload $rf 2>&1" | Out-Null;
+                    cmd.exe /c "sc.exe config $rf start= disabled 2>&1" | Out-Null;
                 }
+            }
+
+            Write-Log "  Verifying AV processes are stopped in memory..." "INFO" Gray;
+            $knownAvProcs = @("ccsvchst", "nortonsecurity", "mbam", "mbamservice", "mcshield", "mfevtps", "avp", "bdservicehost", "avg", "avast");
+            $runningAv = Get-Process | Where-Object { $knownAvProcs -contains $_.Name.ToLower() -or $_.Name -match "(?i)(norton|malwarebytes|mcafee|kaspersky|bitdefender|avast|avg|sophos)" };
+            
+            if ($runningAv) {
+                foreach ($proc in $runningAv) {
+                    Write-Log "  [CRITICAL] Found running AV process: $($proc.Name) (ID: $($proc.Id))" "ERROR" Red;
+                }
+                Write-Log "  [CRITICAL] Antivirus is STILL RUNNING in memory! The upgrade is highly likely to fail." "ERROR" Red;
+                $ReadinessScore -= 40;
             } else {
-                Write-Log "  [OK] No third-party antivirus detected." "SUCCESS" Green;
+                Write-Log "  [OK] AV background processes appear to be successfully disabled." "SUCCESS" Green;
             }
         }
     } catch {
-        Write-Log "  [WARNING] Could not query WMI for Antivirus status." "WARN" Red;
+        Write-Log "  [WARNING] Could not complete Antivirus/Filter audit: $_" "WARN" Red;
     }
     Set-ItemProperty -Path $RegKey -Name "ResumeStep" -Value ($StepNum + 1) -Force
 } else { $script:CurrentStep++ }
@@ -1539,7 +1682,23 @@ if ($ResumeStep -le $StepNum) {
     Step-Progress "System File Checker & DISM Health Checks...";
     $RunHealthChecks = $true;
 
-    if (Test-Path $RegKey) {
+    if ($SkipHealthChecks) {
+        $RunHealthChecks = $false;
+        Write-Log "  [-SkipHealthChecks specified] Skipping SFC, DISM, and CHKDSK health checks." "INFO" Cyan;
+    }
+
+    $markerFile = "$TargetDrive\Windows\Win11Readiness_LastHealthCheck.txt";
+    if ($RunHealthChecks -and (Test-Path $markerFile)) {
+        try {
+            $markerDate = [datetime](Get-Content $markerFile -ErrorAction SilentlyContinue);
+            if ($markerDate -and (Get-Date) -lt $markerDate.AddHours(24)) {
+                $RunHealthChecks = $false;
+                Write-Log "  [SKIP] System health checks verified clean within last 24h ($($markerDate.ToString('g'))). Skipping SFC/DISM." "INFO" Cyan;
+            }
+        } catch {}
+    }
+
+    if ($RunHealthChecks -and -not $IsOffline -and (Test-Path $RegKey)) {
         $lastRunProp = Get-ItemProperty -Path $RegKey -Name "LastHealthCheck" -ErrorAction SilentlyContinue;
         if ($lastRunProp) {
             $lastRunDate = [datetime]$lastRunProp.LastHealthCheck;
@@ -1551,6 +1710,34 @@ if ($ResumeStep -le $StepNum) {
     }
 
     if ($RunHealthChecks) {
+        # ---- Run Volume Filesystem Check (CHKDSK) ----
+        Write-Log "  Checking volume filesystem integrity ($TargetDrive)..." "INFO" Gray;
+        $volLetter = $TargetDrive.TrimEnd(":");
+        $vol = Get-Volume -DriveLetter $volLetter -ErrorAction SilentlyContinue;
+        if ($vol) {
+            Write-Log "  [INFO] Volume $TargetDrive Health: $($vol.HealthStatus), OperationalStatus: $($vol.OperationalStatus)" "INFO" Gray;
+            if ($vol.HealthStatus -ne "Healthy" -or $vol.OperationalStatus -match "Spot Fix Needed|Corrupt|Error|Warning") {
+                Write-Log "  [WARNING] File system corruption detected on $TargetDrive ($($vol.OperationalStatus))!" "WARN" Yellow;
+                Write-Log "  [ACTION] Running CHKDSK /F to repair filesystem corruption..." "INFO" Yellow;
+                
+                $chkAction = Check-KeyboardAction;
+                if ($chkAction -ne "SKIP") {
+                    $chkRes = cmd.exe /c "echo Y | chkdsk $TargetDrive /f 2>&1";
+                    Write-Log "  CHKDSK execution completed." "INFO" Gray;
+                    $volAfter = Get-Volume -DriveLetter $volLetter -ErrorAction SilentlyContinue;
+                    if ($volAfter.HealthStatus -eq "Healthy" -and $volAfter.OperationalStatus -eq "OK") {
+                        Write-Log "  [SUCCESS] Volume $TargetDrive file system successfully repaired to Healthy / OK." "SUCCESS" Green;
+                    } else {
+                        Write-Log "  [INFO] Volume $TargetDrive status after CHKDSK: $($volAfter.HealthStatus) / $($volAfter.OperationalStatus)" "INFO" Yellow;
+                    }
+                } else {
+                    Write-Log "  [SKIP] User skipped CHKDSK repair." "WARN" Yellow;
+                }
+            } else {
+                Write-Log "  [OK] Volume $TargetDrive file system is Healthy." "SUCCESS" Green;
+            }
+        }
+
         $spinner = @('-', '\', '|', '/');
         
         # ---- Run SFC with Heartbeat & Hotkey Controls ----
@@ -1728,7 +1915,8 @@ if ($ResumeStep -le $StepNum) {
         }
 
         # Save timestamp if we got through them
-        Set-ItemProperty -Path $RegKey -Name "LastHealthCheck" -Value (Get-Date).ToString("o") -Force;
+        Set-ItemProperty -Path $RegKey -Name "LastHealthCheck" -Value (Get-Date).ToString("o") -Force -ErrorAction SilentlyContinue;
+        Set-Content -Path "$TargetDrive\Windows\Win11Readiness_LastHealthCheck.txt" -Value (Get-Date).ToString("o") -Force -ErrorAction SilentlyContinue;
     }
 } else { $script:CurrentStep++ }
 
@@ -1764,6 +1952,47 @@ if ($IsOffline) {
     Write-Host "Windows in-place upgrades cannot be launched against an offline installation from a host OS." -ForegroundColor Red;
     Write-Host "Action Required: Put this drive back into the target machine, boot into it, and launch the Windows 11 setup locally." -ForegroundColor Cyan;
     Write-Host "";
+
+    # Generate 1-click upgrade launcher on target drive root
+    $launcherBat = "$TargetDrive\Launch_Win11_Upgrade.bat"
+    $batLines = @(
+        "@echo off",
+        ":: Windows 11 Upgrade Launcher created by Win10to11 Toolkit",
+        "echo ==============================================================",
+        "echo Windows 11 In-Place Upgrade Launcher (Bypass + Safe Flags)",
+        "echo ==============================================================",
+        "echo.",
+        "set `"SETUP_PATH=`"",
+        "for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
+        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.wim`" (",
+        "        set `"SETUP_PATH=%%d:\setup.exe`"",
+        "        goto :found",
+        "    )",
+        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.esd`" (",
+        "        set `"SETUP_PATH=%%d:\setup.exe`"",
+        "        goto :found",
+        "    )",
+        ")",
+        ":found",
+        "if defined SETUP_PATH (",
+        "    echo Found Windows Setup media at: %SETUP_PATH%",
+        "    echo Launching upgrade with: /DynamicUpdate Disable /Compat IgnoreWarning ...",
+        "    echo.",
+        "    `"%SETUP_PATH%`" /DynamicUpdate Disable /Compat IgnoreWarning",
+        ") else (",
+        "    echo [ERROR] No Windows 11 setup media (USB or mounted ISO) was detected.",
+        "    echo Please insert your Windows 11 USB drive or mount the Windows 11 ISO and run this script again.",
+        "    pause",
+        ")"
+    );
+    try {
+        [System.IO.File]::WriteAllLines($launcherBat, $batLines);
+        Write-Log "  [SUCCESS] Generated 1-click upgrade launcher at: $launcherBat" "SUCCESS" Green;
+        Write-Host "  Convenience Helper: Created '$launcherBat'" -ForegroundColor Green;
+        Write-Host "  Once you boot into this drive, double-click 'Launch_Win11_Upgrade.bat' on C:\ to run Setup with safe flags." -ForegroundColor Green;
+    } catch {
+        Write-Log "  [INFO] Could not create launcher bat on target drive: $_" "INFO" Gray;
+    }
     if ($script:ScriptMountedIso) {
         Write-Log "  [ACTION] Dismounting temporary ISO image..." "INFO" Gray;
         Dismount-DiskImage -ImagePath $script:ScriptMountedIso -ErrorAction SilentlyContinue | Out-Null
