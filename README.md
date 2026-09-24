@@ -52,6 +52,11 @@ Standard Windows 11 upgrades frequently fail, rollback, or abort midway due to f
   - Automatically stages a zero-byte `appraiserres.dll` dummy bypass file locally on the PC with zero external download dependencies (Rufus technique).
 - **Automated OEM Driver Backup**:
   Exports all installed third-party drivers to `$ScriptDir\drivers_backup_<PC>_<Timestamp>` using `Export-WindowsDriver` before the upgrade initiates, safeguarding against driver loss during migration.
+- **Universal Minifilter & Driver Heuristics Engine**:
+  - Automatically identifies and neutralizes third-party antivirus and backup kernel filter drivers (Avast/AVG, Symantec/Norton, McAfee, Kaspersky, Bitdefender, Trend Micro, Sophos, Malwarebytes, Acronis True Image, and more).
+  - Performs generic minifilter altitude discovery: unhooks any non-whitelisted third-party filter driver from `ControlSet001\Services` preventing `0x801F0005` SafeOS WIM mount crashes.
+  - Cleans legacy disk, volume, and keyboard `UpperFilters` (such as `aswArDisk`, `Snapman`, `fltsrv`, `klbackupdisk`).
+  - Detects Samsung Magician RAPID Mode (RAM caching) and flags known Intel Rapid Storage Technology (RST) driver versions subject to Microsoft upgrade compatibility blocks.
 - **Fast WinRE Recovery Repair (~15 Seconds)**:
   Auto-discovers and mounts Windows 11 ISOs, locates 7-Zip or NanaZip, and extracts a pristine `Winre.wim` directly from compressed `install.esd` without needing slow DISM mount passes.
 - **Non-Destructive In-Place MBR-to-GPT Conversion**:

@@ -1501,7 +1501,7 @@ if ($ResumeStep -le $StepNum) {
         if ($IsOffline) {
             Write-Log "  [ACTION] Scanning offline target for third-party Antivirus and filesystem filter drivers..." "INFO" Cyan;
             
-            # 1. Check directories
+            # 1. Check directories for major AV, EDR, and backup software
             $avDirs = @(
                 "$TargetDrive\Program Files\AVAST Software",
                 "${TargetDrive}\Program Files (x86)\AVAST Software",
@@ -1510,118 +1510,209 @@ if ($ResumeStep -le $StepNum) {
                 "${TargetDrive}\Program Files (x86)\AVG",
                 "$TargetDrive\ProgramData\Avg",
                 "$TargetDrive\Program Files\Norton Security",
+                "$TargetDrive\Program Files (x86)\Norton Security",
+                "$TargetDrive\Program Files\Symantec",
+                "$TargetDrive\Program Files (x86)\Symantec",
                 "$TargetDrive\Program Files\McAfee",
-                "$TargetDrive\Program Files\Malwarebytes"
+                "$TargetDrive\Program Files (x86)\McAfee",
+                "$TargetDrive\Program Files\Kaspersky Lab",
+                "$TargetDrive\Program Files (x86)\Kaspersky Lab",
+                "$TargetDrive\Program Files\Bitdefender",
+                "$TargetDrive\Program Files\Trend Micro",
+                "$TargetDrive\Program Files\Sophos",
+                "$TargetDrive\Program Files\Malwarebytes",
+                "$TargetDrive\Program Files\WRData",
+                "$TargetDrive\Program Files\ESET",
+                "$TargetDrive\Program Files\Acronis",
+                "$TargetDrive\Program Files (x86)\Samsung\Samsung Magician"
             );
             $foundAvDirs = @($avDirs | Where-Object { Test-Path $_ });
             if ($foundAvDirs.Count -gt 0) {
                 foreach ($d in $foundAvDirs) {
-                    Write-Log "  [WARNING] Found offline AV installation directory: $d" "WARN" Magenta;
+                    Write-Log "  [WARNING] Found offline security/backup software directory: $d" "WARN" Magenta;
                 }
             }
 
-            # 2. Check drivers in System32\drivers (e.g. asw*.sys)
+            # 2. Check drivers in System32\drivers against known upgrade blocker signatures
             $driverDir = "$TargetDrive\Windows\System32\drivers";
+            $knownBlockerPatterns = @(
+                "asw*.sys", "avg*.sys",                      # Avast / AVG
+                "SRTSPX64.SYS", "SRTSP.SYS", "SymEFA.sys",   # Symantec / Norton
+                "SymHsm.sys", "NAVEX15.SYS", "symevent.sys",
+                "mfehidk.sys", "mfeavfk.sys", "mfeapfk.sys", # McAfee / Trellix
+                "klif.sys", "klflt.sys", "klbackupflt.sys",  # Kaspersky
+                "tmactmon.sys", "tmfileflt.sys",             # Trend Micro
+                "hmpalert.sys", "savonaccess.sys",           # Sophos / HitmanPro
+                "gzflt.sys", "atc.sys", "trufos.sys",        # Bitdefender
+                "farflt.sys", "mbamchameleon.sys",           # Malwarebytes
+                "snapman.sys", "fltsrv.sys", "tib.sys",      # Acronis TrueImage
+                "SamsungRapidDiskFltr.sys", "RAPID.sys",     # Samsung Magician RAPID Mode
+                "RsFx010*.sys"                               # Legacy SQL FILESTREAM
+            );
+            
             $fltDrivers = @();
             if (Test-Path $driverDir) {
-                $fltDrivers = @(Get-ChildItem -Path $driverDir -Filter "asw*.sys" -ErrorAction SilentlyContinue);
+                foreach ($pattern in $knownBlockerPatterns) {
+                    $matches = Get-ChildItem -Path $driverDir -Filter $pattern -ErrorAction SilentlyContinue;
+                    if ($matches) { $fltDrivers += $matches }
+                }
             }
 
-            # 3. Check offline SYSTEM hive for active AV services
+            # 3. Check offline SYSTEM hive using Generic Minifilter Discovery Heuristic
             $sysHive = "$TargetDrive\Windows\System32\config\SYSTEM";
-            $avServicesFound = @();
+            $thirdPartyFiltersFound = @();
+            $knownAvServices = @();
+            
+            $msFilterWhitelist = @(
+                'FileInfo', 'Wof', 'bindflt', 'cldflt', 'storqosflt', 'wcifs', 'luafv', 
+                'FileCrypt', 'WIMMount', 'FsDepends', 'UCPD', 'npsvctrig', 'wcnfs', 
+                'AppvStrm', 'AppvVemgr', 'AppvVfs', 'UevAgentDriver', 'Filetrace', 
+                'MsSecFlt', 'applockerfltr', 'PEAUTH', 'WdFilter'
+            );
+
             if (Test-Path $sysHive) {
                 cmd.exe /c "reg.exe load HKLM\OfflineSYSTEM `"$sysHive`" 2>&1" | Out-Null;
                 try {
                     $servicesKey = "HKLM:\OfflineSYSTEM\ControlSet001\Services";
                     if (Test-Path $servicesKey) {
-                        $avServicesFound = @(Get-ChildItem -Path $servicesKey | Where-Object {
-                            $_.PSChildName -match "^asw|^avast|^avg"
+                        # A. Named vendor services (Avast, AVG, Norton, McAfee, etc.)
+                        $knownAvServices = @(Get-ChildItem -Path $servicesKey | Where-Object {
+                            $_.PSChildName -match "^asw|^avast|^avg|^sym|^srtsp|^mfe|^kl|^tm|^hmp|^gzflt|^snapman|^RsFx010"
                         });
+
+                        # B. Generic Heuristic: Any service with an 'Instances' key not in MS whitelist
+                        Get-ChildItem -Path $servicesKey | ForEach-Object {
+                            $sName = $_.PSChildName;
+                            if ($msFilterWhitelist -notcontains $sName) {
+                                $instKey = Join-Path $_.PSPath "Instances";
+                                if (Test-Path $instKey) {
+                                    $sProps = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue;
+                                    if ($sProps.Group -match "FSFilter|Filter" -or $sProps.DependOnService -match "FltMgr") {
+                                        $thirdPartyFiltersFound += [PSCustomObject]@{
+                                            Name      = $sName;
+                                            Group     = $sProps.Group;
+                                            ImagePath = $sProps.ImagePath;
+                                            Start     = $sProps.Start;
+                                        }
+                                    }
+                                }
+                            }
+                        };
                     }
                 } finally {
                     cmd.exe /c "reg.exe unload HKLM\OfflineSYSTEM 2>&1" | Out-Null;
                 }
             }
 
-            if ($avServicesFound.Count -gt 0 -or $fltDrivers.Count -gt 0 -or $foundAvDirs.Count -gt 0) {
-                Write-Host "`n>>> OFFLINE ANTIVIRUS / FILTER DRIVERS DETECTED <<<" -ForegroundColor Red;
-                Write-Host "Avast/AVG filesystem minifilter drivers (aswMonFlt, aswSP, etc.) are installed on this drive." -ForegroundColor Yellow;
-                Write-Host "These filter drivers block Windows Setup offline hive mounting and cause errors 0x801F0005 and 0x80070714!" -ForegroundColor Yellow;
+            # 4. Storage Driver & RAM Cache Heuristic (Samsung RAPID & Intel RST)
+            if (Test-Path $driverDir) {
+                # A. Samsung Magician RAPID Mode
+                $rapidDriver = Join-Path $driverDir "SamsungRapidDiskFltr.sys";
+                if (Test-Path $rapidDriver) {
+                    Write-Host "`n>>> CRITICAL STORAGE WARNING: SAMSUNG RAPID MODE DETECTED <<<" -ForegroundColor Red;
+                    Write-Host "Samsung RAPID Mode caches disk writes in RAM, which corrupts SafeOS migrations (0xC1900101-0x30018)!" -ForegroundColor Yellow;
+                }
+
+                # B. Outdated Intel RST Driver Check
+                $iaStor = Join-Path $driverDir "iaStorA.sys";
+                if (-not (Test-Path $iaStor)) { $iaStor = Join-Path $driverDir "iaStorAC.sys" }
+                if (Test-Path $iaStor) {
+                    $rstVer = (Get-ItemProperty $iaStor).VersionInfo.FileVersion;
+                    if ($rstVer) {
+                        Write-Log "  [INFO] Detected Intel RST storage driver version: $rstVer" "INFO" White;
+                        # Microsoft blocks upgrades on < 15.9.8.1050 and 17.0.x - 17.5.x
+                        if ($rstVer -match "^1[0-4]\." -or $rstVer -match "^15\.[0-8]\." -or $rstVer -match "^17\.[0-4]\.") {
+                            Write-Host "  [WARNING] Intel RST driver version $rstVer is subject to Microsoft upgrade hold!" -ForegroundColor Yellow;
+                            Write-Host "  [MITIGATION] Win10to11 will launch Setup with /DynamicUpdate Disable to bypass this block." -ForegroundColor Cyan;
+                        }
+                    }
+                }
+            }
+
+            $totalBlockers = $knownAvServices.Count + $thirdPartyFiltersFound.Count + $fltDrivers.Count + $foundAvDirs.Count;
+            if ($totalBlockers -gt 0) {
+                Write-Host "`n>>> OFFLINE SECURITY & FILTER DRIVERS DETECTED <<<" -ForegroundColor Red;
+                Write-Host "Third-party filesystem minifilters and storage filter drivers are installed on this drive." -ForegroundColor Yellow;
+                Write-Host "These filter drivers block SafeOS WIM mounting and trigger fatal errors 0x801F0005 and 0x80070714!" -ForegroundColor Yellow;
+                if ($thirdPartyFiltersFound.Count -gt 0) {
+                    foreach ($tpf in $thirdPartyFiltersFound) {
+                        Write-Host "  - Found Minifilter: $($tpf.Name) (Group: $($tpf.Group), Start: $($tpf.Start))" -ForegroundColor Cyan;
+                    }
+                }
                 Write-Host "";
                 
                 $disableConfirm = $true;
                 if (-not $BypassAll) {
-                    $ans = Read-Host "Do you want to neutralize / disable these offline AV filter drivers to allow the upgrade? (Y/N)";
+                    $ans = Read-Host "Do you want to neutralize / disable these offline filter drivers to allow the upgrade? (Y/N)";
                     if ($ans -notmatch "^[Yy]") { $disableConfirm = $false };
                 }
 
-                    if ($disableConfirm) {
-                    Write-Log "  [ACTION] Disabling offline AV and legacy filter services via reg.exe..." "INFO" Yellow;
-                    $loadRes = cmd.exe /c "reg.exe load HKLM\OfflineSYSTEM `"$sysHive`" 2>&1"
+                if ($disableConfirm) {
+                    Write-Log "  [ACTION] Neutralizing offline security and legacy filter services via reg.exe..." "INFO" Yellow;
+                    cmd.exe /c "reg.exe load HKLM\OfflineSYSTEM `"$sysHive`" 2>&1" | Out-Null;
                     try {
-                        # 1. Disable all discovered Avast/AVG services directly with reg.exe (Start=4)
-                        $knownAvServices = @("aswArDisk", "aswArPot", "aswbdisk", "aswbIDSAgent", "aswbidsdriver", "aswbidsh", "aswbuniv", "aswDrvBrg", "aswElam", "aswKbd", "aswMonFlt", "aswNetHub", "aswNetNd6", "aswRdr", "aswRvrt", "aswSnx", "aswSP", "aswStm", "aswVmm", "AvastWscReporter");
-                        foreach ($svc in $knownAvServices) {
+                        # Combine named and generic discovered filter services
+                        $allSvcsToDisable = @();
+                        foreach ($s in $knownAvServices) { $allSvcsToDisable += $s.PSChildName }
+                        foreach ($s in $thirdPartyFiltersFound) { $allSvcsToDisable += $s.Name }
+                        $allSvcsToDisable = @($allSvcsToDisable | Select-Object -Unique);
+
+                        foreach ($svc in $allSvcsToDisable) {
                             cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Services\$svc`" /v Start /t REG_DWORD /d 4 /f 2>&1" | Out-Null;
-                            Write-Log "    Disabled service: $svc (Start=4)" "INFO" Gray;
+                            cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\$svc\Instances`" /f 2>&1" | Out-Null;
+                            Write-Log "    Disabled service & removed filter instance: $svc (Start=4)" "INFO" Gray;
                         }
-                        
-                        # 2. Remove Minifilter Instances from registry so Filter Manager ignores them
-                        cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\aswMonFlt\Instances`" /f 2>&1" | Out-Null;
-                        cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\aswSP\Instances`" /f 2>&1" | Out-Null;
-                        cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\aswSnx\Instances`" /f 2>&1" | Out-Null;
-                        Write-Log "    Removed Filter Manager Instances for aswMonFlt, aswSP, aswSnx" "SUCCESS" Green;
 
-                        # 3. Clean Class UpperFilters (DiskDrive and Keyboard)
+                        # Universal Class UpperFilter Sanitization
+                        # 1. DiskDrive Class: Revert to pure partmgr (removes aswArDisk, snapman, ambakdrv, etc.)
                         cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}`" /v UpperFilters /t REG_MULTI_SZ /d `"partmgr`" /f 2>&1" | Out-Null;
-                        Write-Log "    Cleaned DiskDrive UpperFilters -> partmgr" "SUCCESS" Green;
-                        cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Control\Class\{4d36e96b-e325-11ce-bfc1-08002be10318}`" /v UpperFilters /t REG_MULTI_SZ /d `"kbdclass`" /f 2>&1" | Out-Null;
-                        Write-Log "    Cleaned Keyboard UpperFilters -> kbdclass" "SUCCESS" Green;
+                        Write-Log "    Sanitized DiskDrive UpperFilters -> partmgr" "SUCCESS" Green;
 
-                        # 4. Disable legacy SQL Server 2008 FILESTREAM driver (RsFx0105)
-                        cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Services\RsFx0105`" /v Start /t REG_DWORD /d 4 /f 2>&1" | Out-Null;
-                        cmd.exe /c "reg.exe delete `"HKLM\OfflineSYSTEM\ControlSet001\Services\RsFx0105\Instances`" /f 2>&1" | Out-Null;
-                        Write-Log "    Disabled legacy SQL Server FILESTREAM filter RsFx0105 (Start=4)" "SUCCESS" Green;
+                        # 2. Volume Class: Revert to pure volsnap (removes third-party snapshot hooks)
+                        cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Control\Class\{71a27cdd-812a-11d0-bec7-08002be2092f}`" /v UpperFilters /t REG_MULTI_SZ /d `"volsnap`" /f 2>&1" | Out-Null;
+                        Write-Log "    Sanitized Volume UpperFilters -> volsnap" "SUCCESS" Green;
+
+                        # 3. Keyboard Class: Revert to pure kbdclass (removes aswKbd)
+                        cmd.exe /c "reg.exe add `"HKLM\OfflineSYSTEM\ControlSet001\Control\Class\{4d36e96b-e325-11ce-bfc1-08002be10318}`" /v UpperFilters /t REG_MULTI_SZ /d `"kbdclass`" /f 2>&1" | Out-Null;
+                        Write-Log "    Sanitized Keyboard UpperFilters -> kbdclass" "SUCCESS" Green;
                     } finally {
                         cmd.exe /c "reg.exe unload HKLM\OfflineSYSTEM 2>&1" | Out-Null;
                     }
 
-                    # Rename the critical minifilter driver files so they cannot hook the filesystem
-                    $criticalDrivers = @("aswMonFlt.sys", "aswSP.sys", "aswbidsdriver.sys", "aswRvrt.sys", "aswSnx.sys", "aswNetNd6.sys", "RsFx0105.sys");
-                    foreach ($cd in $criticalDrivers) {
-                        $cdPath = Join-Path $driverDir $cd;
+                    # Rename discovered blocker driver files to .disabled
+                    foreach ($df in $fltDrivers) {
+                        $cdPath = $df.FullName;
                         if (Test-Path $cdPath) {
                             try {
-                                Rename-Item -Path $cdPath -NewName "$cd.disabled" -Force -ErrorAction Stop;
-                                Write-Log "    Renamed driver: $cd -> $cd.disabled" "SUCCESS" Green;
+                                Rename-Item -Path $cdPath -NewName "$($df.Name).disabled" -Force -ErrorAction Stop;
+                                Write-Log "    Renamed driver: $($df.Name) -> $($df.Name).disabled" "SUCCESS" Green;
                             } catch {
-                                Write-Log "    Could not rename ${cd}: $_" "WARN" Yellow;
+                                Write-Log "    Could not rename $($df.Name): $_" "WARN" Yellow;
                             }
                         }
                     }
 
-                    # Quarantine any leftover asw*.tmp and asw*.backup driver remnants
-                    $quarDir = Join-Path $driverDir "Avast_Quarantine";
-                    $remnants = @(Get-ChildItem -Path $driverDir | Where-Object { $_.Name -match "^asw.*(\.tmp|\.backup|\.sum)$" });
+                    # Quarantine any leftover *.tmp and *.backup driver remnants
+                    $quarDir = Join-Path $driverDir "Quarantined_Drivers";
+                    $remnants = @(Get-ChildItem -Path $driverDir | Where-Object { $_.Name -match "^(asw|avg|sym|mfe|kl|snap).*\.(tmp|backup|sum)$" });
                     if ($remnants.Count -gt 0) {
                         if (-not (Test-Path $quarDir)) { New-Item -ItemType Directory -Path $quarDir -Force | Out-Null };
                         foreach ($rem in $remnants) {
                             Move-Item -Path $rem.FullName -Destination $quarDir -Force -ErrorAction SilentlyContinue;
                         }
-                        Write-Log "    Quarantined $($remnants.Count) Avast temporary/backup driver files." "INFO" Gray;
+                        Write-Log "    Quarantined $($remnants.Count) temporary/backup driver files." "INFO" Gray;
                     }
 
-                    # Remove Avast driver package from offline DriverStore
+                    # Remove known rogue driver packages from offline DriverStore
                     cmd.exe /c "dism.exe /Image:`"$TargetDrive\`" /Remove-Driver /Driver:oem76.inf 2>&1" | Out-Null;
 
-                    Write-Log "  [SUCCESS] Offline AV & legacy filter drivers neutralized. Setup will not be blocked by 0x801F0005." "SUCCESS" Green;
+                    Write-Log "  [SUCCESS] Offline security & legacy filter drivers neutralized. Setup will not be blocked by 0x801F0005." "SUCCESS" Green;
                 } else {
-                    Write-Log "  [WARNING] Offline AV filter drivers remain active. Upgrade is highly likely to fail." "WARN" Red;
+                    Write-Log "  [WARNING] Offline filter drivers remain active. Upgrade is highly likely to fail." "WARN" Red;
                     $ReadinessScore -= 30;
                 }
             } else {
-                Write-Log "  [OK] No active offline third-party AV filter drivers found." "SUCCESS" Green;
+                Write-Log "  [OK] No active offline third-party filter drivers found." "SUCCESS" Green;
             }
         } else {
             # Online AV & Filter Driver Check
@@ -1644,7 +1735,13 @@ if ($ResumeStep -le $StepNum) {
             # Check for active kernel minifilters in memory via fltmc
             Write-Log "  Auditing active filesystem minifilter drivers (fltmc)..." "INFO" Gray;
             $fltOut = cmd.exe /c "fltmc filters 2>&1" | Out-String;
-            $activeRogueFilters = @("aswMonFlt", "aswSP", "aswSnx", "RsFx0105") | Where-Object { $fltOut -match $_ };
+            $rogueFilterList = @(
+                "aswMonFlt", "aswSP", "aswSnx", "RsFx0105", "RsFx0100", "RsFx0101", 
+                "SRTSPX64", "SRTSP", "SymEFA", "mfehidk", "mfeavfk", "klif", 
+                "tmactmon", "tmfileflt", "hmpalert", "gzflt", "farflt", "snapman", 
+                "SamsungRapidDiskFltr", "RAPID"
+            );
+            $activeRogueFilters = @($rogueFilterList | Where-Object { $fltOut -match $_ });
             if ($activeRogueFilters.Count -gt 0) {
                 foreach ($rf in $activeRogueFilters) {
                     Write-Log "  [CRITICAL] Active filter driver detected in memory: $rf" "ERROR" Red;
@@ -1654,15 +1751,23 @@ if ($ResumeStep -le $StepNum) {
                 }
             }
 
+            # Check for Samsung Magician RAPID Mode service online
+            $rapidSvc = Get-Service -Name "RAPID" -ErrorAction SilentlyContinue;
+            if (-not $rapidSvc) { $rapidSvc = Get-Service -Name "SamsungRapidDiskFltr" -ErrorAction SilentlyContinue }
+            if ($rapidSvc) {
+                Write-Host "`n>>> CRITICAL WARNING: SAMSUNG RAPID MODE IS RUNNING <<<" -ForegroundColor Red;
+                Write-Host "Disable RAPID Mode in the Samsung Magician application before upgrading to prevent fatal rollback (0xC1900101-0x30018)!" -ForegroundColor Yellow;
+            }
+
             Write-Log "  Verifying AV processes are stopped in memory..." "INFO" Gray;
-            $knownAvProcs = @("ccsvchst", "nortonsecurity", "mbam", "mbamservice", "mcshield", "mfevtps", "avp", "bdservicehost", "avg", "avast");
-            $runningAv = Get-Process | Where-Object { $knownAvProcs -contains $_.Name.ToLower() -or $_.Name -match "(?i)(norton|malwarebytes|mcafee|kaspersky|bitdefender|avast|avg|sophos)" };
+            $knownAvProcs = @("ccsvchst", "nortonsecurity", "mbam", "mbamservice", "mcshield", "mfevtps", "avp", "bdservicehost", "avg", "avast", "wrsvc", "ekrn", "trufos");
+            $runningAv = Get-Process | Where-Object { $knownAvProcs -contains $_.Name.ToLower() -or $_.Name -match "(?i)(norton|malwarebytes|mcafee|kaspersky|bitdefender|avast|avg|sophos|eset|webroot|acronis)" };
             
             if ($runningAv) {
                 foreach ($proc in $runningAv) {
-                    Write-Log "  [CRITICAL] Found running AV process: $($proc.Name) (ID: $($proc.Id))" "ERROR" Red;
+                    Write-Log "  [CRITICAL] Found running AV/Backup process: $($proc.Name) (ID: $($proc.Id))" "ERROR" Red;
                 }
-                Write-Log "  [CRITICAL] Antivirus is STILL RUNNING in memory! The upgrade is highly likely to fail." "ERROR" Red;
+                Write-Log "  [CRITICAL] Antivirus/Backup software is STILL RUNNING in memory! The upgrade is highly likely to fail." "ERROR" Red;
                 $ReadinessScore -= 40;
             } else {
                 Write-Log "  [OK] AV background processes appear to be successfully disabled." "SUCCESS" Green;
