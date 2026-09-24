@@ -5,6 +5,12 @@ log/
 # Driver Backups
 drivers_backup_*/
 
+# On-Demand Tools (downloaded automatically at runtime when needed)
+gptgen.exe
+gptgen*.zip
+gptgen*/
+LICENSE-gptgen*.txt
+
 # Disk Preview & MBR Backups
 gptgen_preview/
 *.bin

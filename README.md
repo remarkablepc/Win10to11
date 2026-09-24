@@ -33,11 +33,12 @@ Standard Windows 11 upgrades frequently fail, rollback, or abort midway due to f
 
 | Upgrade Blocker / Error | Root Cause | How Win10to11 Solves It |
 | :--- | :--- | :--- |
+| **`0x801F0005` / `0x80070714`** *(Pre-Finalize Driver Migration Crash)* | Antivirus minifilters (`aswMonFlt`, `aswSnx`, `aswSP`) or legacy storage/SQL filters intercepting mounted SafeOS WIM reparse points | Actively scans and neutralizes third-party filter drivers, cleans storage/keyboard `UpperFilters`, removes rogue `Instances` from the registry, and unhooks legacy filters. |
 | **`0x80070714`** *(Pre-Finalize SafeOS Crash)* | Missing `Winre.wim`, corrupted recovery partition, or stale MBR partition GUIDs in `ReAgent.xml` | Auto-extracts pristine `Winre.wim` directly from ISO `install.esd`/`install.wim` in ~15 seconds and re-binds recovery pointers. |
 | **`0xC1900101 - 0x40021`** *(Second Boot Sysprep Rollback)* | Conflicting third-party drivers from Dynamic Update, orphaned `.bak` user profiles, or corrupted performance counter tables | Audits and backs up all OEM drivers (`Export-WindowsDriver`), purges duplicate `.bak` profile keys, rebuilds counters (`lodctr /R`), and launches with `/DynamicUpdate Disable`. |
 | **Hardware Rejections** *(CPU, TPM 2.0, SecureBoot, RAM)* | Microsoft hardware gatekeeping on older or non-standard machines | Injects comprehensive MoSetup & LabConfig registry bypasses and stages a 0-byte `appraiserres.dll` hardware check neutralizer. |
 | **Legacy BIOS / MBR Disks** | Windows 11 mandates UEFI firmware and GPT partition style | Non-destructively converts disks in-place: native `mbr2gpt` for live systems, and bundled `gptgen` with automatic ESP creation for offline USB docks. |
-| **Offline Drive Servicing** | Customer drive pulled from a non-booting PC into a workbench USB dock | Full offline targeting: loads offline hives, audits offline components, converts docked disks, and pre-stages the target drive. |
+| **Offline Drive Servicing** | Customer drive pulled from a non-booting PC into a workbench USB dock | Full offline targeting: loads offline hives, audits offline components, converts docked disks, generates a 1-click launcher, and pre-stages the target drive. |
 
 ---
 
@@ -91,6 +92,7 @@ Open an elevated PowerShell prompt in the script directory:
 | `-SkipElevation` | Switch | Skips the self-elevation check (useful when running inside automated deployment pipelines). |
 | `-AutoLaunch` | Switch | Automatically launches setup with recommended flags once all readiness checks pass. |
 | `-BypassAll` | Switch | Non-interactive mode: automatically approves hardware bypasses, driver backups, and defaults without pausing for user confirmation. |
+| `-SkipHealthChecks` | Switch | Skips CHKDSK, SFC, and DISM scans (recommended when drive health checks have already passed or are running on tight timelines). |
 
 ---
 
@@ -100,19 +102,17 @@ Open an elevated PowerShell prompt in the script directory:
 Win10to11/
 ├── Win10to11.ps1             # Main PowerShell script
 ├── run.bat                   # Elevated batch launcher (forwards all CLI arguments)
-├── gptgen.exe                # Offline technician MBR-to-GPT conversion tool
 ├── LICENSE                   # MIT License
-├── LICENSE-gptgen.txt        # Open-source ISC license for gptgen
 ├── README.md                 # Full repository documentation
-└── .gitignore                # Filters logs, driver backups, and scratch files
+└── .gitignore                # Filters logs, driver backups, on-demand tools, and scratch files
 ```
 
 ---
 
-## 🔒 100% Offline & Clean Room Compliance
+## 🔒 Clean Room & On-Demand Architecture
 
-- **Zero Copyright Infringement:** Contains zero copyrighted or proprietary Microsoft binaries. The `appraiserres.dll` hardware check bypass is generated dynamically on the host machine as an empty dummy file, carrying zero legal or DMCA risk on public repositories.
-- **Open-Source Tooling:** Bundles `gptgen` under the permissive [ISC License](https://github.com/xorangekiller/gptgen). If `gptgen` is missing from a clean git checkout, the script queries GitHub's latest release API and requests user permission before downloading.
+- **Zero Copyright Infringement:** Contains zero copyrighted or proprietary Microsoft binaries. The `appraiserres.dll` hardware check bypass is generated dynamically on the host machine as an empty dummy file, carrying zero legal or DMCA risk.
+- **On-Demand Third-Party Tooling:** Third-party binary tools like `gptgen` are **never stored in the repository**. If MBR-to-GPT conversion is required on an offline docked disk and `gptgen.exe` is not already present, the script automatically resolves and downloads the official release package on-demand from its open-source GitHub repository with user permission.
 
 ---
 
