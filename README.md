@@ -45,9 +45,15 @@
 If you have ever spent hours on a customer PC or your own workstation fighting a Windows 10 to 11 upgrade that stubbornly refuses to complete, you know this exact loop:
 
 ```text
-[Launch Setup] ──▶ [Wait 45 minutes to reach 73%] ──▶ [Crash & Rollback] ──▶ [Error: 0x80070714 / 0x801F0005]
-                                                                                      │
-[Dig through 150MB of setupact.log] ◀── [Wasted 4 Hours on Bench] ◀───────────────────┘
+┌──────────────────────────────────────────────┐
+│  1. Launch Windows Setup                     │
+│  2. Wait 45 minutes (creeps to 73%)          │
+│  3. Crash & Rollback: 0x80070714 / 0x801F0005│
+│  4. Dig through 150MB of setupact.log        │
+│  5. 4+ hours wasted... back to square one!   │
+└───────────────────────┬──────────────────────┘
+                        ▼
+            [Enter Win10to11 Toolkit]
 ```
 
 You are greeted by an opaque hex code like **`0x80070714`**, **`0x801F0005`**, or **`0xC1900101 - 0x40021`**. Then starts the manual archaeology:
@@ -192,10 +198,8 @@ Win10to11/
 
 ## 💼 More Tools by RemarkablePC
 
-* **[CCSync](https://github.com/remarkablepc/CCSync)** — *The Privacy-First Contact & Calendar Manager & Sync Suite.* Connects Google, Outlook Classic (MAPI), Apple iCloud, and CardDAV/CalDAV without routing personal data through third-party servers.
-* **[AppTransporter](https://github.com/remarkablepc)** — Windows application, user profile, and bench data migration toolkit for fast PC replacements.
-* **[Page2Divi](https://github.com/remarkablepc)** — Web layout and content conversion automation for WordPress and Divi environments.
 * **[WINBARS](https://github.com/remarkablepc)** — Desktop taskbar enhancement and multi-monitor productivity workspace for Windows.
+* **[Page2Divi](https://github.com/remarkablepc)** — Web layout and content conversion automation for WordPress and Divi environments.
 
 ---
 
@@ -205,8 +209,8 @@ Win10to11 is **100% free and open source**.
 
 If this script saved you from hours of hair-pulling troubleshooting, rescued an unbootable machine from rollback loops, or sped up your bench repair turnaround time, please consider buying a coffee or sponsoring development:
 
-* **[☕ Say Thanks via PayPal (UHM Link)](https://www.paypal.com/ncp/payment/EKH76RTYHH24S?uhm=Win10to11)**
-* **[💖 Sponsor on GitHub Sponsors (UHM Link)](https://github.com/sponsors/remarkablepc?uhm=Win10to11)**
+* **[☕ Say Thanks via PayPal](https://www.paypal.com/ncp/payment/EKH76RTYHH24S?uhm=Win10to11)**
+* **[💖 Sponsor on GitHub Sponsors](https://github.com/sponsors/remarkablepc?uhm=Win10to11)**
 
 ---
 
