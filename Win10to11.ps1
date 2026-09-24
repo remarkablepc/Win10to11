@@ -169,19 +169,18 @@ function Get-MountedSetupDrive {
         }
     }
 
-    # 2. Check known ISO file paths if not mounted
+    # 2. Check standard search locations for a Windows 11 ISO file if not already mounted
     $isoCandidates = @(
-        "N:\_ISO\Windows\Win11\Win11.iso",
-        "$ScriptDir\..\_ISO\Windows\Win11\Win11.iso",
         "$ScriptDir\_ISO\Windows\Win11\Win11.iso",
-        "C:\Users\jdavi\Documents\MEGA downloads\Win11_23H2_English_x64 (Older PC Copy - 2026-09-05).iso"
+        "$ScriptDir\Win11.iso",
+        "$ScriptDir\..\_ISO\Windows\Win11\Win11.iso"
     )
     foreach ($drive in $drives) {
         $isoCandidates += "$($drive.Name):\_ISO\Windows\Win11\Win11.iso"
     }
     $searchDirs = @(
-        "$env:USERPROFILE\Documents\MEGA downloads",
         "$env:USERPROFILE\Downloads",
+        "$env:USERPROFILE\Documents",
         "$ScriptDir"
     )
     foreach ($sd in $searchDirs) {
@@ -1406,9 +1405,10 @@ if ($ResumeStep -le $StepNum) {
                 if ($BypassAll) {
                     Write-Log "  [-BypassAll active] No ISO detected. Proceeding without fresh ISO WinRE extraction." "INFO" Yellow;
                 } else {
-                    Write-Host "`n[ACTION REQUIRED] No Windows 11 ISO detected." -ForegroundColor Magenta;
-                    Write-Host "Please place Win11.iso at N:\_ISO\Windows\Win11\Win11.iso or mount it." -ForegroundColor Magenta;
-                    Write-Host "Press any key once the ISO is available..." -ForegroundColor Magenta;
+                    Write-Host "`n[ACTION REQUIRED] Windows 11 ISO or setup drive not detected." -ForegroundColor Magenta;
+                    Write-Host "Please mount your Windows 11 ISO (right-click -> Mount), plug in a USB setup drive," -ForegroundColor Magenta;
+                    Write-Host "or place Win11.iso in $ScriptDir." -ForegroundColor Magenta;
+                    Write-Host "Press any key once the ISO or USB drive is mounted..." -ForegroundColor Magenta;
                     $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown');
                     $isoDrive = Get-MountedSetupDrive;
                 }
