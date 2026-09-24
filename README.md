@@ -48,16 +48,26 @@ Instead of waiting an hour for Windows Setup to crash and sifting through crypti
 
 ---
 
+## 🛠️ Verified Field Scenarios
+
+| Environment / Hardware | Failure Symptom | Underlying Root Cause | Win10to11 Action & Outcome |
+| :--- | :--- | :--- | :--- |
+| **Dell Latitude (Workstation SSD)** | Rollback at SafeOS (`0x801F0005` / `0x80070714`) | Uninstalled Avast left active kernel minifilters (`aswSnx.sys`, Altitude 137600) and disk `UpperFilter` (`aswArDisk`) blocking SafeOS WIM reparse queries. | Automatically unhooked filter services, sanitized class `UpperFilters` to `partmgr`. **In-place upgrade succeeded.** |
+| **HP EliteDesk (Enterprise PC)** | Pre-Finalize Crash (`0x80070714`) | Missing or damaged `Winre.wim` and broken partition GUID in `ReAgent.xml`. | Auto-detected mounted ISO, unpacked clean `Winre.wim` in ~15s, re-indexed recovery environment. **Upgrade completed.** |
+| **Lenovo ThinkCentre (Docked Drive)** | Blocked by Legacy MBR partition style | Drive connected via USB bench dock; Windows native `mbr2gpt` cannot convert secondary or external disks. | Verified BitLocker status, executed safe dry-run test, created binary MBR backup, converted to GPT via `gptgen`, staged ESP + BCD. **Booted UEFI and upgraded.** |
+
+---
+
 ## 🛡️ Common Upgrade Blockers Addressed
 
 | Error Code / Blocker | Root Cause | What Win10to11 Does |
 | :--- | :--- | :--- |
-| **`0x801F0005` / `0x80070714`**<br>*(SafeOS Driver Migration Crash)* | Antivirus minifilters (`aswMonFlt`, `aswSnx`, `SRTSPX64`) or legacy disk `UpperFilters` (`aswArDisk`, `Snapman`) intercepting mounted SafeOS WIM reparse points. | **Minifilter Audit**: Scans services with an `Instances` key against a Microsoft core whitelist, unhooks third-party filters, and restores device class `UpperFilters` (`partmgr`, `volsnap`, `kbdclass`) to safe defaults via direct registry writes. |
+| **`0x801F0005` / `0x80070714`**<br>*(SafeOS Driver Migration Crash)* | Antivirus minifilters (`aswMonFlt`, `aswSnx`, `SRTSPX64`) or legacy disk `UpperFilters` (`aswArDisk`, `Snapman`) intercepting mounted SafeOS WIM reparse points. | **Minifilter Audit & Cleanup**: Scans services with an `Instances` key against a Microsoft core whitelist, unhooks third-party filters, and restores device class `UpperFilters` (`partmgr`, `volsnap`, `kbdclass`) to safe defaults via direct registry writes. |
 | **`0x80070714`**<br>*(WinRE Staging Failure)* | Missing `Winre.wim`, corrupted recovery partition, or stale partition GUIDs in `ReAgent.xml`. | **Recovery Audit & Rapid Extraction**: Checks recovery health. If missing or damaged, prompts the user to mount Windows 11 media, extracts `Winre.wim` directly from `sources\install.esd` or `install.wim` via 7-Zip/NanaZip (or native DISM fallback), and re-binds recovery pointers. |
 | **`0xC1900101 - 0x40021`**<br>*(Second-Boot Sysprep Rollback)* | Generic drivers from Dynamic Update colliding with OEM hardware, corrupted user profile `.bak` keys, or corrupt performance counters. | **Pre-Emptive Cleanup**: Backs up all OEM drivers via `Export-WindowsDriver`, cleans orphaned duplicate profile keys, rebuilds performance counters (`lodctr /R`), and launches setup with `/DynamicUpdate Disable`. |
-| **Hardware Rejections**<br>*(CPU, TPM 2.0, SecureBoot, RAM)* | Windows 11 hardware checks blocking otherwise capable machines. | **Zero-Touch Bypasses**: Injects standard `MoSetup` and `LabConfig` registry bypasses; dynamically generates a local 0-byte `appraiserres.dll` hardware check neutralizer (clean-room compliant). |
+| **Hardware Rejections**<br>*(CPU, TPM 2.0, SecureBoot, RAM)* | Windows 11 hardware checks blocking otherwise capable machines. | **Automated Compatibility Bypasses**: Injects standard `MoSetup` and `LabConfig` registry bypasses; dynamically generates a local 0-byte `appraiserres.dll` hardware check neutralizer (clean-room compliant). |
 | **Legacy MBR Partition Style** | Windows 11 requires UEFI boot and GPT partition layout. | **Non-Destructive In-Place Conversion**: Runs native `mbr2gpt` on live host systems. For offline docked drives, verifies BitLocker status, runs a read-only dry run via on-demand `gptgen`, saves a binary `.bin` MBR backup, converts partition tables, and guides EFI System Partition (ESP) & BCD creation. |
-| **Storage Accelerator Conflicts** | Samsung RAPID Mode RAM caching or outdated Intel RST drivers. | **Heuristic Detection**: Warns against volatile RAM write-caching and checks Intel RST driver revisions against Microsoft block thresholds (`< 15.9.8.1050` or `17.0.x - 17.5.x`). |
+| **Storage Accelerator Conflicts** | Samsung RAPID Mode RAM caching or outdated Intel RST drivers. | **Compatibility & Driver Checks**: Warns against volatile RAM write-caching and checks Intel RST driver revisions against Microsoft block thresholds (`< 15.9.8.1050` or `17.0.x - 17.5.x`). |
 
 ---
 
@@ -98,12 +108,39 @@ Open an elevated Administrator PowerShell prompt:
 
 ---
 
+## 💻 Console Output Preview
+
+Here is an example of what running `Win10to11` on a bench target looks like in the terminal:
+
+```text
+====================================================================
+  Win10to11 - Windows 10 to 11 In-Place Upgrade & Repair Toolkit
+  Target: Offline Windows Partition (Drive P:)
+====================================================================
+[1/10] Pre-Flight Health Check... [OK: Verified within 24h]
+[2/10] Auditing Storage Drivers & Minifilters...
+  [WARN] Third-party minifilter detected: aswSnx (Altitude: 137600)
+  [ACTION] Neutralizing rogue filter driver service (Start=4)...
+  [OK] UpperFilters on DiskDrive class sanitized to 'partmgr'.
+[3/10] Auditing Windows Recovery Environment (WinRE)...
+  [ACTION] Extracting clean Winre.wim from install.esd (~15s)...
+  [SUCCESS] Offline WinRE rebuilt and registered successfully.
+[4/10] Partition Table & Bootloader Verification...
+  [OK] BitLocker check passed. Disk verified as GPT.
+[5/10] Staging Compatibility Bypasses...
+  [OK] Injected MoSetup & LabConfig bypass keys.
+  [OK] Staged 0-byte appraiserres.dll hardware check neutralizer.
+>>> System is prepped and ready for Windows 11 Setup! <<<
+```
+
+---
+
 ## 🚀 Key Features
 
 * **Dual-Mode Operation (Live Host or External Dock)**:
   * Run directly on the live Windows 10 workstation being upgraded.
   * Or dock a customer's drive via an external USB/SATA bench dock (`-TargetDriveLetter P:`), load offline hives, repair components, and generate a 1-click self-contained launcher on the customer's desktop.
-* **Universal Minifilter & Driver Sanitizer**:
+* **Minifilter Audit & Cleanup**:
   * Scans across 12+ security vendors: **Avast/AVG, Symantec/Norton, McAfee, Kaspersky, Bitdefender, Trend Micro, Sophos, Malwarebytes, Webroot, ESET, and Acronis True Image**.
   * Unhooks unknown third-party kernel filter drivers possessing an `Instances` key not on Microsoft's core whitelist.
   * Sanitizes DiskDrive (`partmgr`), Volume (`volsnap`), and Keyboard (`kbdclass`) `UpperFilters`.
@@ -155,41 +192,44 @@ Win10to11 addresses these predictable friction points before Windows Setup execu
 ---
 
 <details>
-<summary><b>🔄 Click to Expand: Upgrade Architecture Pipeline</b></summary>
+<summary><b>🔄 Click to Expand: Upgrade Pipeline Workflow</b></summary>
 
 <br>
 
-```mermaid
-flowchart TD
-  Start([Start Win10to11]) --> Mode{Select Execution Mode}
-  
-  Mode -->|Live Host| Live[🖥️ Live Host Windows 10 PC]
-  Mode -->|Offline Dock| Dock[💽 Offline USB / SATA Docked Drive]
-  
-  Live --> Health[1. Pre-Flight Health Check: SFC / DISM / CHKDSK]
-  Dock --> Health
-  
-  Health --> FilterScan[2. Universal Minifilter & Driver Audit]
-  FilterScan --> FilterFix[3. Neutralize Rogue Antivirus & Storage UpperFilters]
-  
-  FilterFix --> WinREAudit[4. Recovery Environment Audit]
-  WinREAudit --> WinRECheck{WinRE Missing / Corrupt?}
-  WinRECheck -->|Yes| PromptISO[5. Detect Media or Prompt to Mount Win11 ISO]
-  PromptISO --> FastExtract[6. Rapid Winre.wim Extraction ~15s via 7-Zip/NanaZip or DISM]
-  WinRECheck -->|No / Healthy| PartCheck
-  FastExtract --> PartCheck{Disk Style?}
-  
-  PartCheck -->|Legacy MBR| BitLockerCheck{BitLocker Active?}
-  BitLockerCheck -->|Yes| WarnBL[Suspend Protection / Verify Recovery Key]
-  BitLockerCheck -->|No| Convert[7. Non-Destructive In-Place MBR to GPT]
-  WarnBL --> Convert
-  Convert --> Drivers
-  PartCheck -->|UEFI GPT| Drivers[8. Export & Backup OEM Third-Party Drivers]
-  
-  Drivers --> Bypass[9. Inject Hardware Bypasses: TPM, CPU, RAM, SecureBoot]
-  Bypass --> Launch[10. Safe Launch: /DynamicUpdate Disable /Compat IgnoreWarning]
-  
-  Launch --> Desktop([🎉 Successful Windows 11 Desktop Migration!])
+```text
+┌────────────────────────────────────────────────────────┐
+│                   START Win10to11                      │
+└───────────────────────────┬────────────────────────────┘
+                            │
+              [Select Execution Environment]
+             ┌──────────────┴──────────────┐
+             ▼                             ▼
+       Live Host PC              External USB/SATA Dock
+             │                             │
+             └──────────────┬──────────────┘
+                            ▼
+    [1. Pre-Flight Health: SFC / DISM / CHKDSK Verification]
+                            │
+                            ▼
+    [2. Minifilter Audit: Neutralize Rogue AV Filters & UpperFilters]
+                            │
+                            ▼
+    [3. Recovery Check: Extract Fresh Winre.wim if Damaged/Missing]
+                            │
+                            ▼
+    [4. Partition Check: BitLocker Test -> Convert MBR to GPT -> ESP]
+                            │
+                            ▼
+    [5. Driver Safety: Export Installed OEM Drivers to Backup Folder]
+                            │
+                            ▼
+    [6. Compatibility: Inject MoSetup, LabConfig & Neutralizer]
+                            │
+                            ▼
+    [7. Launch Setup: Run with /DynamicUpdate Disable]
+                            │
+                            ▼
+    [🎉 Successful Windows 11 Desktop Migration!]
 ```
 
 </details>
