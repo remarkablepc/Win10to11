@@ -54,7 +54,7 @@ You are greeted by an opaque hex code like **`0x80070714`**, **`0x801F0005`**, o
 - Hunting through hundreds of thousands of lines in `C:\$WINDOWS.~BT\Sources\Panther\setupact.log`.
 - Discovering that an uninstalled third-party antivirus (Avast, AVG, Norton, McAfee) secretly left behind an active kernel minifilter (`aswSnx.sys`, `SRTSPX64.SYS`) or a disk `UpperFilter` (`aswArDisk`) that intercepted the SafeOS WIM mount and returned `ERROR_FLT_INVALID_NAME_REQUEST`.
 - Finding that the Windows Recovery Environment (`Winre.wim`) is missing or has a desynchronized partition GUID in `ReAgent.xml`.
-- Struggling to convert an MBR disk to GPT on a drive pulled from a non-booting PC into an external bench dock where Microsoft's `mbr2gpt` refuses to operate.
+- Struggling to convert an MBR disk to GPT on a drive pulled from a non-booting PC into an external bench dock where Microsoft's native `mbr2gpt` refuses to operate.
 - Dealing with arbitrary CPU, TPM 2.0, RAM, or SecureBoot blocks on otherwise fast, capable hardware.
 
 **I built Win10to11 because I was tired of Windows 10 failing to upgrade to Windows 11 over and over again, wasting countless hours of manual troubleshooting on the bench.**
@@ -69,8 +69,8 @@ Win10to11 encapsulates years of battle-tested field diagnosis into a single, aut
 flowchart TD
   Start([Start Win10to11]) --> Mode{Select Execution Mode}
   
-  Mode -->|Option A| Live[🖥️ Live Host Windows 10 PC]
-  Mode -->|Option B| Dock[💽 Offline USB / SATA Docked Drive]
+  Mode -->|Live Host| Live[🖥️ Live Host Windows 10 PC]
+  Mode -->|Offline Dock| Dock[💽 Offline USB / SATA Docked Drive]
   
   Live --> Health[1. Pre-Flight Health Check: SFC / DISM / CHKDSK]
   Dock --> Health
@@ -79,15 +79,18 @@ flowchart TD
   FilterScan --> FilterFix[3. Neutralize Rogue Antivirus & Storage UpperFilters]
   
   FilterFix --> WinREAudit[4. Recovery Environment Audit]
-  WinREAudit --> WinREExtract[5. Fast Winre.wim ISO Extraction ~15s]
+  WinREAudit --> WinRECheck{WinRE Missing / Corrupt?}
+  WinRECheck -->|Yes| PromptISO[5. Detect Media or Prompt to Mount Win11 ISO]
+  PromptISO --> FastExtract[6. Rapid Winre.wim Extraction ~15s via 7-Zip/NanaZip]
+  WinRECheck -->|No / Healthy| PartCheck
+  FastExtract --> PartCheck{Disk Style?}
   
-  WinREExtract --> PartCheck{Disk Style?}
-  PartCheck -->|Legacy MBR| Convert[6. Non-Destructive In-Place MBR-to-GPT + EFI Creation]
-  PartCheck -->|UEFI GPT| Drivers[7. Export & Backup OEM Third-Party Drivers]
+  PartCheck -->|Legacy MBR| Convert[7. Non-Destructive In-Place MBR to GPT]
   Convert --> Drivers
+  PartCheck -->|UEFI GPT| Drivers[8. Export & Backup OEM Third-Party Drivers]
   
-  Drivers --> Bypass[8. Inject Hardware Bypasses: TPM, CPU, RAM, SecureBoot]
-  Bypass --> Launch[9. Safe Launch: /DynamicUpdate Disable /Compat IgnoreWarning]
+  Drivers --> Bypass[9. Inject Hardware Bypasses: TPM, CPU, RAM, SecureBoot]
+  Bypass --> Launch[10. Safe Launch: /DynamicUpdate Disable /Compat IgnoreWarning]
   
   Launch --> Desktop([🎉 Successful Windows 11 Desktop Migration!])
 ```
@@ -99,10 +102,10 @@ flowchart TD
 | Error Code / Symptom | Root Cause | How Win10to11 Solves It |
 | :--- | :--- | :--- |
 | **`0x801F0005` / `0x80070714`**<br>*(SafeOS Pre-Finalize Driver Migration Crash)* | Antivirus minifilters (`aswMonFlt`, `aswSnx`, `SRTSPX64`) or legacy disk `UpperFilters` (`aswArDisk`, `Snapman`, `fltsrv`) intercepting mounted SafeOS WIM reparse points. | **Universal Minifilter Discovery**: Enumerates all services with an `Instances` key, cross-checks against a Microsoft core whitelist, unhooks rogue filters, and resets device class `UpperFilters` to defaults using direct registry writes. |
-| **`0x80070714`**<br>*(WinRE SafeOS Staging Failure)* | Missing `Winre.wim`, corrupted recovery partition, or stale partition GUIDs in `ReAgent.xml`. | **Sub-15s ISO Extraction**: Mounts Windows 11 ISO, unpacks `Winre.wim` directly from `install.esd` / `install.wim` via 7-Zip/NanaZip, places it in `Recovery\WindowsRE`, and re-indexes recovery pointers. |
+| **`0x80070714`**<br>*(WinRE SafeOS Staging Failure)* | Missing `Winre.wim`, corrupted recovery partition, or stale partition GUIDs in `ReAgent.xml`. | **Recovery Audit & Rapid Extraction**: Checks `ReAgent.xml` health. If corrupted or missing, auto-detects mounted setup media or prompts the technician to mount a Windows 11 ISO/USB. Unpacks a pristine `Winre.wim` directly from `sources\install.esd` / `install.wim` via 7-Zip/NanaZip in ~15 seconds and re-indexes recovery pointers. |
 | **`0xC1900101 - 0x40021`**<br>*(Second-Boot Sysprep Rollback)* | Generic drivers fetched via Dynamic Update colliding with OEM hardware, corrupted user profile `.bak` keys, or corrupt performance counters. | **Pre-Emptive Cleanup**: Audits and backs up all OEM drivers via `Export-WindowsDriver`, cleans duplicate profile registry keys, rebuilds counters (`lodctr /R`), and executes setup with `/DynamicUpdate Disable`. |
 | **Hardware Gatekeeping**<br>*(CPU, TPM 2.0, SecureBoot, RAM)* | Windows 11 setup requirements blocking perfectly serviceable machines. | **Zero-Touch Bypasses**: Injects `AllowUpgradesWithUnsupportedTPMOrCPU` and complete `LabConfig` suite; dynamically stages a 0-byte `appraiserres.dll` hardware check neutralizer (clean-room compliant). |
-| **Legacy BIOS / MBR Partition Style** | Windows 11 strictly mandates UEFI firmware and GPT partition structure. | **Non-Destructive In-Place Conversion**: Executes `mbr2gpt` on live systems, or auto-shrinks disk by 33 sectors, converts partition tables via `gptgen`, creates FAT32 EFI partition, and writes BCD bootloader on offline bench docks. |
+| **Legacy BIOS / MBR Partition Style** | Windows 11 strictly mandates UEFI firmware and GPT partition structure. | **Non-Destructive In-Place Conversion**: Runs native `mbr2gpt` on live host machines. For offline docked drives (where `mbr2gpt` cannot run), prompts on-demand to fetch open-source `gptgen`, runs a read-only dry-run simulation, auto-shrinks partition space if needed, saves a binary `.bin` MBR backup, writes GPT, and guides FAT32 EFI partition (ESP) & BCD creation. |
 | **Storage Accelerator Conflicts** | Samsung RAPID Mode RAM caching or incompatible Intel RST drivers. | **Heuristic Detection**: Warns against volatile RAM write-caching and checks Intel RST driver revisions against Microsoft block thresholds (`< 15.9.8.1050` or `17.0.x - 17.5.x`). |
 
 ---
@@ -111,17 +114,20 @@ flowchart TD
 
 * **Dual-Mode Flexibility (Live Host or Bench Dock)**:
   * Run directly on the live Windows 10 workstation you are upgrading.
-  * Or dock a customer's drive into an external USB/SATA dock (`-TargetDriveLetter O:`), load offline hives, repair components, and generate a 1-click self-contained launcher on the customer's desktop.
+  * Or dock a customer's drive into an external USB/SATA dock (`-TargetDriveLetter P:`), load offline hives, repair components, and generate a 1-click self-contained launcher on the customer's desktop.
 * **Universal Minifilter & Driver Sanitizer**:
   * Scans across 12+ security vendors: **Avast/AVG, Symantec/Norton, McAfee, Kaspersky, Bitdefender, Trend Micro, Sophos, Malwarebytes, Webroot, ESET, and Acronis True Image**.
   * Generic Minifilter Heuristic unhooks any unknown kernel filter driver with an `Instances` key not on Microsoft's whitelist.
   * Sanitizes DiskDrive (`partmgr`), Volume (`volsnap`), and Keyboard (`kbdclass`) `UpperFilters`.
 * **Automated OEM Driver Backup**:
   * Backs up all installed third-party drivers to `$ScriptDir\drivers_backup_<PC>_<Timestamp>` using `Export-WindowsDriver` prior to upgrade initiation.
-* **15-Second WinRE Recovery Repair**:
-  * Unpacks pristine `Winre.wim` directly from ISO `install.esd`/`install.wim` without slow multi-gigabyte DISM extraction passes.
-* **Non-Destructive MBR-to-GPT Conversion**:
-  * Fully automated partition table migration with zero data loss, partition shrinking, FAT32 EFI System Partition (ESP) creation, and fresh `bcdboot` UEFI files.
+* **Rapid WinRE Recovery Repair (~15 Seconds with Mounted ISO)**:
+  * Audits `ReAgent.xml` and validates `Winre.wim` integrity on both live and offline installations.
+  * If WinRE is missing or corrupted, prompts the technician to mount a Windows 11 ISO or plug in a setup USB (or auto-detects already mounted media or local ISO).
+  * Rapidly unpacks `Winre.wim` directly from `sources\install.esd` or `install.wim` using 7-Zip or NanaZip in ~15 seconds—avoiding multi-gigabyte DISM extraction passes—and automatically re-binds recovery pointers with `reagentc`.
+* **Non-Destructive In-Place MBR-to-GPT Conversion**:
+  * *Live Host:* Runs validated `mbr2gpt.exe /convert /disk:N /allowFullOS`, falling back to `gptgen` if Microsoft layout checks fail.
+  * *Offline Dock:* Prompts to download open-source `gptgen` on-demand from GitHub if not already present in the folder. Performs a mandatory read-only dry-run layout test, auto-shrinks the last partition by 16MB if end-of-disk space is required for the backup GPT table, backs up the original MBR to a `.bin` file, and guides the technician through EFI System Partition (ESP) verification/creation and fresh UEFI bootloader staging (`bcdboot`).
 * **Health Check Caching**:
   * Includes `-SkipHealthChecks` switch and automatic 24-hour verification markers to eliminate redundant 30-minute SFC/DISM re-scans when bench testing.
 
@@ -180,7 +186,7 @@ Win10to11/
 ## 🔒 Clean Room & On-Demand Architecture
 
 * **Zero Copyright Infringement**: Contains zero proprietary Microsoft binaries or redistributables. The `appraiserres.dll` hardware bypass is generated dynamically in-memory as an empty 0-byte file (the standard Rufus clean-room method).
-* **On-Demand Third-Party Tooling**: Third-party binaries like `gptgen` are **never stored in the git repository**. When an offline docked disk conversion requires `gptgen`, the script queries GitHub's official release API and downloads the verified binary on-demand with user consent.
+* **On-Demand Third-Party Tooling**: Third-party binaries like `gptgen` are **never bundled in the git repository**. When an offline docked disk conversion requires `gptgen`, the script queries GitHub's official release API and downloads the verified open-source release on-demand with technician consent (or uses an existing local copy if already present).
 
 ---
 
