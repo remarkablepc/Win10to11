@@ -1,0 +1,22 @@
+# Logs & Diagnostics
+log/
+*.log
+
+# Driver Backups
+drivers_backup_*/
+
+# Disk Preview & MBR Backups
+gptgen_preview/
+*.bin
+*.img
+
+# Backups & Temporary files
+*.bak
+*.tmp
+*.zip
+
+# Scratch & Legacy Dev Directory
+scratch/
+
+# Local Release Staging
+dist/
