@@ -706,6 +706,42 @@ if ($ResumeStep -le $StepNum) {
             Write-Host "Target Disk: Disk $($targetDisk.Number) ($($targetDisk.FriendlyName))" -ForegroundColor Cyan
             Write-Host "Total Size: $([math]::Round($targetDisk.Size/1GB, 2)) GB | Partition Style: MBR" -ForegroundColor Cyan
 
+            # ── BitLocker Safety Check ──
+            Write-Log "  [ACTION] Checking BitLocker encryption status on $TargetDrive..." "INFO" Gray
+            try {
+                $bdeOutput = cmd.exe /c "manage-bde.exe -status $TargetDrive 2>&1" | Out-String
+                if ($bdeOutput -match "Protection Status:\s+Protection On" -or $bdeOutput -match "Conversion Status:\s+(?!Fully Decrypted)" -or $bdeOutput -match "Lock Status:\s+Locked") {
+                    Write-Host "`n==================================================" -ForegroundColor Red
+                    Write-Host "   CRITICAL WARNING: BITLOCKER ENCRYPTION ACTIVE  " -ForegroundColor Red
+                    Write-Host "==================================================" -ForegroundColor Red
+                    Write-Host "Target drive $TargetDrive has BitLocker protection enabled or encryption active." -ForegroundColor Yellow
+                    Write-Host "Modifying partition tables on an encrypted disk can lead to permanent data loss." -ForegroundColor Yellow
+                    Write-Host "Ensure you have the 48-digit Recovery Key backed up before continuing." -ForegroundColor Yellow
+                    Write-Log "  [WARN] BitLocker protection detected on $TargetDrive" "WARN" Yellow
+                    
+                    if (-not $BypassAll) {
+                        Write-Host "`nOptions:" -ForegroundColor Cyan
+                        Write-Host "  [1] Attempt to Suspend BitLocker protection (manage-bde -protectors -disable)" -ForegroundColor White
+                        Write-Host "  [2] Acknowledge risk and proceed (I have verified the recovery key)" -ForegroundColor White
+                        Write-Host "  [Q] Abort conversion and exit" -ForegroundColor White
+                        $blChoice = Read-Host "`nSelect an option [1, 2, Q] (Default: 1)"
+                        if ($blChoice -eq "" -or $blChoice -eq "1") {
+                            Write-Log "  [ACTION] Suspending BitLocker protection on $TargetDrive..." "INFO" Yellow
+                            $suspendRes = cmd.exe /c "manage-bde.exe -protectors -disable $TargetDrive 2>&1" | Out-String
+                            Write-Log "  manage-bde: $suspendRes" "INFO" Gray
+                            Write-Host $suspendRes -ForegroundColor Gray
+                        } elseif ($blChoice -match "^[qQ]") {
+                            Write-Log "  [QUIT] User aborted MBR-to-GPT conversion due to BitLocker warning." "WARN" Red
+                            exit
+                        }
+                    }
+                } else {
+                    Write-Log "  [OK] BitLocker is disabled or drive is fully decrypted." "SUCCESS" Green
+                }
+            } catch {
+                Write-Log "  [INFO] BitLocker status check note: $_" "INFO" Gray
+            }
+
             # ── Lazy-Load Helper for gptgen (Called ONLY when strictly required) ──
             $gptgenExe = $null
             $GetGptGenExe = {
