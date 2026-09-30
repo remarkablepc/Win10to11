@@ -2301,4 +2301,12 @@ if ($IsOffline) {
 
 Write-Log "`nScript completed. Log saved to: $LogFile" "INFO" Cyan;
 
+Write-Host ""
+Write-Host "==============================================================================" -ForegroundColor DarkGray
+Write-Host " Win10to11 — Maintained by RemarkablePC" -ForegroundColor Cyan
+Write-Host " Explore more tools on GitHub: https://github.com/remarkablepc" -ForegroundColor White
+Write-Host " Peer-to-peer discussion: https://github.com/remarkablepc/Win10to11/discussions" -ForegroundColor DarkGray
+Write-Host "==============================================================================" -ForegroundColor DarkGray
+Write-Host ""
+
 

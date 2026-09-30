@@ -251,10 +251,19 @@ Win10to11 addresses these predictable friction points before Windows Setup execu
 
 ---
 
-## 💼 More Tools by RemarkablePC
+## 💼 Explore More Tools by RemarkablePC
 
-* **[WINBARS](https://github.com/remarkablepc)** — Desktop taskbar enhancement and multi-monitor productivity workspace for Windows.
-* **[Page2Divi](https://github.com/remarkablepc)** — Web layout and content conversion automation for WordPress and Divi environments.
+Explore more tools, closed-source freeware, web development solutions, and technician utilities on GitHub:
+* **[https://github.com/remarkablepc](https://github.com/remarkablepc)**
+
+---
+
+## 💬 Community & Peer Discussions
+
+Peer-to-peer discussions and technician field reports are hosted on GitHub Discussions:
+* **[GitHub Discussions](https://github.com/remarkablepc/Win10to11/discussions)**
+
+*(Note: Win10to11 is provided as-is without 1-on-1 technical support).*
 
 ---
 
