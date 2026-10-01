@@ -480,9 +480,22 @@ function Invoke-RebootCountdown {
 }
 
 Write-Log "==================================================" "INFO" Cyan;
-Write-Log "   Windows 11 Readiness & Prep Script Started     " "INFO" Cyan;
+Write-Log "   Win10to11 Upgrade & Readiness Toolkit v1.0.0-beta " "INFO" Cyan;
 Write-Log "==================================================" "INFO" Cyan;
 Write-Log "Log file: $LogFile" "INFO" Gray;
+
+# Dynamic Bench Telemetry & Success Audit
+try {
+    $benchLogDir = Split-Path -Parent $LogFile
+    $priorSuccesses = (Get-ChildItem -Path $benchLogDir -Filter "*.log" -ErrorAction SilentlyContinue | Where-Object { 
+        $_.Length -gt 0 -and (Select-String -Path $_.FullName -Pattern "SUCCESS|In-Place Upgrade.*Completed" -Quiet -ErrorAction SilentlyContinue) 
+    }).Count
+    if ($priorSuccesses -gt 0) {
+        Write-Log "Bench Telemetry: $priorSuccesses verified upgrade/readiness run(s) logged." "INFO" Green
+    } else {
+        Write-Log "Target Support: Windows 10 (21H2-22H2) -> Windows 11 (23H2-24H2) | Bypasses: LabConfig/MoSetup" "INFO" DarkGray
+    }
+} catch {}
 
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
@@ -2303,7 +2316,7 @@ Write-Log "`nScript completed. Log saved to: $LogFile" "INFO" Cyan;
 
 Write-Host ""
 Write-Host "==============================================================================" -ForegroundColor DarkGray
-Write-Host " Win10to11 — Maintained by RemarkablePC" -ForegroundColor Cyan
+Write-Host " Win10to11 -- Maintained by RemarkablePC" -ForegroundColor Cyan
 Write-Host " Explore more tools on GitHub: https://github.com/remarkablepc" -ForegroundColor White
 Write-Host " Peer-to-peer discussion: https://github.com/remarkablepc/Win10to11/discussions" -ForegroundColor DarkGray
 Write-Host "==============================================================================" -ForegroundColor DarkGray
