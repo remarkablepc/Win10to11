@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/remarkablepc/Win10to11/releases/latest">
-    <img src="https://img.shields.io/badge/Release-v0.9.0--beta-orange?logo=github&logoColor=white" alt="Latest Release">
+    <img src="https://img.shields.io/badge/Release-v1.0.0--beta-0078D4?logo=github&logoColor=white" alt="Latest Release">
   </a>
   <a href="https://github.com/remarkablepc/Win10to11/releases">
     <img src="https://img.shields.io/badge/Downloads-Releases-2ea44f?logo=github&logoColor=white" alt="Downloads">
@@ -17,8 +17,13 @@
 </p>
 
 # Win10to11
-### *A practical PowerShell toolkit to diagnose, repair, and prepare stubborn Windows 10 PCs for Windows 11 upgrades.*
+### *A practical PowerShell toolkit to diagnose, repair, and prepare stubborn Windows 10 PCs for Windows 11 upgrades (v1.0.0-beta).*
 **Engineered by [RemarkablePC](https://github.com/remarkablepc) to dramatically increase first-pass upgrade success rates on live host machines and offline USB-docked drives.**
+
+> [!NOTE]
+> ### 📊 Dynamic Bench Telemetry & Target Verification (Public Beta v1.0.0-beta)
+> * **Live Bench Telemetry**: When launched on bench or portable drives, Win10to11 parses historical upgrade receipts to compute dynamic statistics: `Total Upgrades Processed`, `Success Rate %`, and `Average Upgrade Duration`.
+> * **Target OS Build Matrix**: Tested and verified across Windows 10 (21H2/22H2) upgrading to Windows 11 22H2, 23H2, and 24H2. Auto-selects appropriate bypass flags for dynamic setup switches.
 
 <p align="center">
   <a href="https://github.com/remarkablepc/Win10to11/archive/refs/heads/main.zip">
