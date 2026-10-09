@@ -166,6 +166,8 @@ Here is an example of what running `Win10to11` on a bench target looks like in t
   * Automatically profiles and logs target motherboard, model, BIOS release date, CPU architecture, RAM, and OS build. Extracts specs live via WMI/CIM, or forensically from offline registry hives (`SystemInformation` + `Enum\ACPI`) when analyzing a customer's drive in an external dock.
 * **Intelligent Zero-Prompt Bypass Engine**:
   * On live host PCs, evaluates TPM 2.0, SecureBoot, CPU generation, and RAM in milliseconds: skips bypasses if fully compliant, or automatically applies MoSetup & LabConfig bypasses without prompting if unsupported hardware is detected. Preserves interactive confirmation for offline drives.
+* **Fast Startup & Hibernation Defusal**:
+  * Automatically disables Fast Startup (`HiberbootEnabled = 0`) and purges locked `hiberfil.sys` files, preventing the notorious "Shutdown loops back into Login Screen" bug common on older Intel MEI/chipsets and releasing dirty NTFS filesystem volume locks prior to upgrade execution.
 * **Health Check Caching**:
   * Includes `-SkipHealthChecks` and 24-hour verification markers to eliminate redundant 30-minute SFC/DISM re-scans during iterative bench testing.
 

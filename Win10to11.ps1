@@ -838,6 +838,38 @@ if ($ResumeStep -le $StepNum) {
         if ($IsOffline) { cmd.exe /c "reg unload HKLM\OfflineSYSTEM" 2>&1 | Out-Null }
     }
 
+    # 1C. Defuse Fast Startup & Hibernation (Eliminates Shutdown -> Login Screen Loop and Dirty Volume Lock)
+    try {
+        if ($IsOffline) {
+            Write-Log "  [ACTION] Defusing Fast Startup & Hibernation in target registry (prevents shutdown loop)..." "INFO" Gray
+            $sysHive = "$TargetDrive\Windows\System32\config\SYSTEM"
+            cmd.exe /c "reg load HKLM\OfflineSYSFastStartup `"$sysHive`" 2>&1" | Out-Null
+            if (Test-Path "HKLM:\OfflineSYSFastStartup\ControlSet001\Control\Session Manager\Power") {
+                Set-ItemProperty -Path "HKLM:\OfflineSYSFastStartup\ControlSet001\Control\Session Manager\Power" -Name "HiberbootEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path "HKLM:\OfflineSYSFastStartup\ControlSet001\Control\Power") {
+                Set-ItemProperty -Path "HKLM:\OfflineSYSFastStartup\ControlSet001\Control\Power" -Name "HibernateEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            }
+            cmd.exe /c "reg unload HKLM\OfflineSYSFastStartup 2>&1" | Out-Null
+            Write-Log "  [OK] Fast Startup and Hibernation disabled in target registry." "SUCCESS" Green
+        } else {
+            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name "HiberbootEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "HibernateEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            cmd.exe /c "powercfg /h off 2>&1" | Out-Null
+            Write-Log "  [OK] Fast Startup and Hibernation disabled on live system." "SUCCESS" Green
+        }
+
+        # Purge locked hiberfil.sys if present
+        if (Test-Path "$TargetDrive\hiberfil.sys") {
+            cmd.exe /c "attrib -h -s -r `"$TargetDrive\hiberfil.sys`" 2>&1" | Out-Null
+            Remove-Item "$TargetDrive\hiberfil.sys" -Force -ErrorAction SilentlyContinue
+            Write-Log "  [OK] Purged stale hiberfil.sys to release dirty filesystem lock." "SUCCESS" Green
+        }
+    } catch {
+        Write-Log "  [INFO] Fast Startup defusal notice: $_" "INFO" Gray
+        if ($IsOffline) { cmd.exe /c "reg unload HKLM\OfflineSYSFastStartup 2>&1" | Out-Null }
+    }
+
     Set-ItemProperty -Path $RegKey -Name "ResumeStep" -Value ($StepNum + 1) -Force
 } else { $script:CurrentStep++ }
 
