@@ -1605,6 +1605,27 @@ if ($ResumeStep -le $StepNum) {
                 $importRes = cmd.exe /c "bcdedit /import `"$espDrive\EFI\Microsoft\Boot\BCD`" /clean 2>&1" | Out-String
                 Write-Log "  bcdedit /import: $($importRes.Trim())" "INFO" Gray;
             }
+
+            # 4E-1. Stamp FAT32 Partition Boot Record (PBR) on ESP via bootsect
+            Write-Log "  [ACTION] Stamping FAT32 Partition Boot Record (PBR) on ESP via bootsect..." "INFO" Gray
+            $bsRes = cmd.exe /c "bootsect.exe /nt60 $espDrive /force /mbr 2>&1" | Out-String
+            Write-Log "  bootsect output: $($bsRes.Trim())" "INFO" Gray
+
+            # 4E-2. Inject automated motherboard NVRAM registration into target RunOnce (for offline targets)
+            if ($IsOffline) {
+                try {
+                    Write-Log "  [ACTION] Scheduling motherboard NVRAM auto-registration for target first-boot..." "INFO" Gray
+                    $softHive = "$TargetDrive\Windows\System32\config\SOFTWARE"
+                    if (Test-Path $softHive) {
+                        cmd.exe /c "reg load HKLM\OfflineSoftNvram `"$softHive`" 2>&1" | Out-Null
+                        cmd.exe /c "reg add `"HKLM\OfflineSoftNvram\Microsoft\Windows\CurrentVersion\RunOnce`" /v AutoRegisterUEFI /t REG_SZ /d `"cmd.exe /c bcdboot C:\Windows /f UEFI`" /f 2>&1" | Out-Null
+                        cmd.exe /c "reg unload HKLM\OfflineSoftNvram 2>&1" | Out-Null
+                        Write-Log "  [OK] Motherboard NVRAM auto-registration scheduled in target RunOnce." "SUCCESS" Green
+                    }
+                } catch {
+                    cmd.exe /c "reg unload HKLM\OfflineSoftNvram 2>&1" | Out-Null
+                }
+            }
         } else {
             Write-Log "  [ACTION] Running default bcdboot refresh..." "INFO" Yellow;
             $bcdOutput = cmd.exe /c "bcdboot `"$TargetDrive\Windows`" /f UEFI 2>&1" | Out-String;
@@ -2368,6 +2389,9 @@ if ($IsOffline) {
         "echo ==============================================================",
         "echo Windows 11 In-Place Upgrade Launcher (Bypass + Safe Flags)",
         "echo ==============================================================",
+        "echo.",
+        "echo [ACTION] Verifying motherboard UEFI NVRAM registration...",
+        "bcdboot C:\Windows /f UEFI >nul 2>&1",
         "echo.",
         "set `"SETUP_PATH=`"",
         "for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
