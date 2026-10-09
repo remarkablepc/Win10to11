@@ -428,56 +428,76 @@ function Get-MountedSetupDrive {
         }
     }
 
-    # 2. Check standard search locations for a Windows 11 ISO file if not already mounted
-    $isoCandidates = @(
-        "$ScriptDir\_ISO\Windows\Win11\Win11.iso",
-        "$ScriptDir\Win11.iso",
-        "$ScriptDir\..\_ISO\Windows\Win11\Win11.iso"
+    # 2. Comprehensive multi-drive search for Windows 11 ISO files
+    $isoCandidates = @()
+    $subDirs = @(
+        "ISOs\Windows",
+        "ISO\Windows",
+        "_ISO\Windows\Win11",
+        "_ISO\Windows",
+        "ISOs",
+        "ISO",
+        "_ISO",
+        "Ventoy",
+        "Downloads",
+        ""
     )
+
     foreach ($drive in $drives) {
-        $isoCandidates += "$($drive.Name):\_ISO\Windows\Win11\Win11.iso"
+        foreach ($sub in $subDirs) {
+            $folder = if ($sub) { "$($drive.Name):\$sub" } else { "$($drive.Name):\" }
+            if (Test-Path $folder) {
+                $found = Get-ChildItem -Path $folder -Filter "*Win11*.iso" -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+                if ($found) { $isoCandidates += $found }
+            }
+        }
     }
-    $searchDirs = @(
-        "$env:USERPROFILE\Downloads",
-        "$env:USERPROFILE\Documents",
-        "$ScriptDir"
-    )
-    foreach ($sd in $searchDirs) {
-        if (Test-Path $sd) {
-            $isoCandidates += @(Get-ChildItem -Path $sd -Filter "*Win11*.iso" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+
+    # Also search user profile and script directory tree
+    $userDirs = @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Documents", "$ScriptDir", "$ScriptDir\..")
+    foreach ($ud in $userDirs) {
+        if (Test-Path $ud) {
+            $found = Get-ChildItem -Path $ud -Filter "*Win11*.iso" -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+            if ($found) { $isoCandidates += $found }
         }
     }
 
     $foundIso = $null
-    foreach ($candidate in $isoCandidates) {
-        if ($candidate -and (Test-Path $candidate)) {
-            $item = Get-Item $candidate -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($item -and (-not $item.PSIsContainer) -and $item.Extension -eq ".iso") {
-                $foundIso = $item.FullName
-                break
-            }
-        }
-    }
+    $isoList = $isoCandidates | Select-Object -Unique | Where-Object { Test-Path $_ } | ForEach-Object { Get-Item $_ } | Sort-Object Length -Descending
+    if ($isoList) {
+        $item = $isoList[0]
+        $foundIso = $item.FullName
+        $sizeGb = [math]::Round($item.Length / 1GB, 2)
+        Write-Host "`n[ISO DISCOVERY] Found Windows 11 ISO: $foundIso ($sizeGb GB)" -ForegroundColor Green
+        Write-Log "  [ACTION] Auto-detected Windows 11 ISO: $foundIso ($sizeGb GB)" "INFO" Yellow
 
-    if ($foundIso) {
-        Write-Log "  [ACTION] Auto-detected Windows 11 ISO file at: $foundIso" "INFO" Yellow
-        try {
-            Write-Log "  [ACTION] Auto-mounting Windows 11 ISO..." "INFO" Yellow
-            $mountRes = Mount-DiskImage -ImagePath $foundIso -StorageType ISO -Access ReadOnly -PassThru -ErrorAction Stop
-            if ($mountRes) {
-                $vol = $mountRes | Get-Volume -ErrorAction SilentlyContinue
-                if ($vol -and $vol.DriveLetter) {
-                    $script:ScriptMountedIso = $foundIso
-                    Write-Log "  [SUCCESS] Auto-mounted ISO to Drive $($vol.DriveLetter):" "SUCCESS" Green
-                    return $vol.DriveLetter
+        $mountChoice = $true
+        if (-not $BypassAll -and -not $AutoLaunch) {
+            $mAns = Read-Host "Auto-mount this Windows 11 ISO now? [Y/N] (Default: Y)"
+            if ($mAns -ne "" -and $mAns -notmatch "^[yY]") { $mountChoice = $false }
+        }
+
+        if ($mountChoice) {
+            try {
+                Write-Log "  [ACTION] Auto-mounting Windows 11 ISO ($foundIso)..." "INFO" Yellow
+                $mountRes = Mount-DiskImage -ImagePath $foundIso -StorageType ISO -Access ReadOnly -PassThru -ErrorAction Stop
+                Start-Sleep -Seconds 2
+                if ($mountRes) {
+                    $vol = $mountRes | Get-Volume -ErrorAction SilentlyContinue
+                    if ($vol -and $vol.DriveLetter) {
+                        $script:ScriptMountedIso = $foundIso
+                        Write-Log "  [SUCCESS] Auto-mounted ISO to Drive $($vol.DriveLetter):" "SUCCESS" Green
+                        Write-Host "[SUCCESS] Windows 11 ISO mounted to Drive $($vol.DriveLetter):" -ForegroundColor Green
+                        return $vol.DriveLetter
+                    }
                 }
+            } catch {
+                Write-Log "  [WARN] Failed to auto-mount ISO ($foundIso): $_" "WARN" Yellow
             }
-        } catch {
-            Write-Log "  [WARN] Failed to auto-mount ISO ($foundIso): $_" "WARN" Yellow
         }
     }
 
-    return $null;
+    return $null
 }
 
 # Helper to extract clean Winre.wim from ISO (install.esd or install.wim)
@@ -2510,6 +2530,21 @@ if ($IsOffline) {
         "    )",
         ")",
         ":found",
+        "if not defined SETUP_PATH (",
+        "    echo [ACTION] Searching for Windows 11 ISO on connected USB and local drives...",
+        "    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"$drives = (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Name -match '^[A-Z]$' }).Root; $cand = @(); foreach ($d in $drives) { $cand += (Get-ChildItem -Path $d -Filter '*Win11*.iso' -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName) }; $best = $cand | Select-Object -Unique | ForEach-Object { Get-Item $_ } | Sort-Object Length -Descending | Select-Object -First 1; if ($best) { Write-Host 'Auto-mounting ISO:' $best.FullName; Mount-DiskImage -ImagePath $best.FullName -PassThru | Out-Null }`"",
+        "    for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
+        "        if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.wim`" (",
+        "            set `"SETUP_PATH=%%d:\setup.exe`"",
+        "            goto :found_after_mount",
+        "        )",
+        "        if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.esd`" (",
+        "            set `"SETUP_PATH=%%d:\setup.exe`"",
+        "            goto :found_after_mount",
+        "        )",
+        "    )",
+        ")",
+        ":found_after_mount",
         "if defined SETUP_PATH (",
         "    echo Found Windows Setup media at: %SETUP_PATH%",
         "    echo Launching upgrade with: /DynamicUpdate Disable /Compat IgnoreWarning ...",
