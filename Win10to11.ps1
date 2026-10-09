@@ -686,10 +686,24 @@ function Extract-WinREFromISO {
     return $false
 }
 
+function Show-Win10to11Banner {
+    Write-Host ""
+    Write-Host ' __        ___       _  ___  _        _ _ ' -ForegroundColor Cyan
+    Write-Host ' \ \      / (_)_ __ / |/ _ \ | |_ ___ / / |' -ForegroundColor Cyan
+    Write-Host '  \ \ /\ / /| | ''_ \| | | | || __/ _ \| | |' -ForegroundColor Cyan
+    Write-Host '   \ V  V / | | | | | | |_| || || (_) | | |' -ForegroundColor Cyan
+    Write-Host '    \_/\_/  |_|_| |_|_|\___/  \__\___/|_|_|' -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Win10to11 - Windows 11 In-Place Upgrade Toolkit v1.0.0-beta" -ForegroundColor White
+    Write-Host "  A technician's pre-flight repair & universal hardware bypass engine" -ForegroundColor DarkGray
+    Write-Host ""
+}
+Show-Win10to11Banner
+
 # ------------------------------------------------------------------
 # Drive Selection (Online vs Offline)
 # ------------------------------------------------------------------
-Write-Host "`nScanning for Windows installations..." -ForegroundColor Cyan;
+Write-Host "Scanning for Windows installations..." -ForegroundColor Cyan;
 $winDrives = @()
 $drives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Name -match "^[A-Z]$" }
 foreach ($drive in $drives) {
