@@ -696,6 +696,7 @@ function Show-Win10to11Banner {
     Write-Host ""
     Write-Host "  Win10to11 - Windows 11 In-Place Upgrade Toolkit v1.0.0-beta" -ForegroundColor White
     Write-Host "  A technician's pre-flight repair & universal hardware bypass engine" -ForegroundColor DarkGray
+    Write-Host "  Explore more technician tools: https://github.com/remarkablepc" -ForegroundColor DarkCyan
     Write-Host ""
 }
 Show-Win10to11Banner
