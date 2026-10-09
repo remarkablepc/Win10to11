@@ -157,6 +157,216 @@ function Set-AppraiserBypass {
     }
 }
 
+# Extracts comprehensive hardware and OS profile from either live host or offline target drive
+function Get-TargetSystemProfile {
+    param(
+        [Parameter(Mandatory=$true)][string]$TargetRoot,
+        [Parameter(Mandatory=$true)][bool]$IsOffline
+    )
+
+    $profile = [PSCustomObject]@{
+        ComputerName        = "Unknown"
+        Manufacturer        = "Unknown"
+        Model               = "Unknown"
+        Processor           = "Unknown"
+        RAM                 = "Unknown"
+        BIOSVersion         = "Unknown"
+        BIOSDate            = "Unknown"
+        OSCaption           = "Unknown"
+        OSBuild             = "Unknown"
+        PartitionStyle      = "Unknown"
+        FirmwareMode        = "Unknown"
+        TPMStatus           = "Unknown"
+        SecureBootStatus    = "Unknown"
+        IsCompliant         = $false
+        NonCompliantReasons = [System.Collections.Generic.List[string]]::new()
+    }
+
+    if (-not $IsOffline) {
+        # --- Live Host System Profiling ---
+        try {
+            $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+            $proc = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+            $bios = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+            $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+            $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue
+
+            $profile.ComputerName = $env:COMPUTERNAME
+            if ($cs) {
+                $profile.Manufacturer = if ($cs.Manufacturer) { $cs.Manufacturer.Trim() } else { "Generic" }
+                $profile.Model = if ($cs.Model) { $cs.Model.Trim() } else { "Generic" }
+                if ($cs.TotalPhysicalMemory) {
+                    $gb = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
+                    $profile.RAM = "$gb GB"
+                    if ($gb -lt 3.8) {
+                        $profile.NonCompliantReasons.Add("RAM less than 4GB ($gb GB)")
+                    }
+                }
+            }
+
+            if ($proc) {
+                $profile.Processor = if ($proc.Name) { ($proc.Name -replace '\s+', ' ').Trim() } else { "Unknown" }
+                $cpuName = $profile.Processor
+                $cpuOk = $false
+                if ($cpuName -match "i[3579]-(?:[89]\d{3}|1[0-9]\d{3}|2[0-9]\d{3})|Core.*Ultra|Xeon.*(?:E-2[12]|W-2[12]|W-3[12])|Ryzen\s+[3579]\s+(?:[2-9]\d{3}|[1-9]\d{4})|Threadripper\s+(?:29|39|[579]\d{3})") {
+                    $cpuOk = $true
+                } elseif ($cpuName -match "i7-7820HQ") {
+                    $cpuOk = $true
+                }
+                if (-not $cpuOk) {
+                    $profile.NonCompliantReasons.Add("Processor ($cpuName) not on official Win11 whitelist")
+                }
+            }
+
+            if ($bios) {
+                $profile.BIOSVersion = if ($bios.SMBIOSBIOSVersion) { $bios.SMBIOSBIOSVersion.Trim() } else { "Unknown" }
+                $profile.BIOSDate = if ($bios.ReleaseDate) {
+                    try { ([datetime]$bios.ReleaseDate).ToString("yyyy-MM-dd") } catch { "$($bios.ReleaseDate)" }
+                } else { "Unknown" }
+            }
+
+            if ($os) {
+                $profile.OSCaption = if ($os.Caption) { $os.Caption.Trim() } else { "Windows 10" }
+                $build = if ($cv.CurrentBuild) { $cv.CurrentBuild } else { $os.BuildNumber }
+                $ubr = if ($cv.UBR) { ".$($cv.UBR)" } else { "" }
+                $dispVer = if ($cv.DisplayVersion) { " ($($cv.DisplayVersion))" } else { "" }
+                $profile.OSBuild = "Build $build$ubr$dispVer"
+            }
+
+            # TPM Check
+            try {
+                $tpm = Get-Tpm -ErrorAction SilentlyContinue
+                $tpmWmi = Get-CimInstance -Namespace "root\cimv2\security\microsofttpm" -ClassName Win32_Tpm -ErrorAction SilentlyContinue
+                if ($tpm -and $tpm.TpmPresent -and $tpm.TpmReady -and $tpmWmi -and $tpmWmi.SpecVersion -match "2\.0") {
+                    $profile.TPMStatus = "TPM 2.0 Present & Ready"
+                } elseif ($tpm -and $tpm.TpmPresent) {
+                    $spec = if ($tpmWmi.SpecVersion) { $tpmWmi.SpecVersion } else { "Legacy" }
+                    $profile.TPMStatus = "Present but Not TPM 2.0 ($spec)"
+                    $profile.NonCompliantReasons.Add("TPM is not version 2.0 ($spec)")
+                } else {
+                    $profile.TPMStatus = "Not Detected / Missing"
+                    $profile.NonCompliantReasons.Add("TPM 2.0 not detected or disabled in BIOS")
+                }
+            } catch {
+                $profile.TPMStatus = "Query Failed"
+                $profile.NonCompliantReasons.Add("Could not query TPM")
+            }
+
+            # Secure Boot Check
+            try {
+                $sbCmd = Confirm-SecureBootUEFI -ErrorAction SilentlyContinue
+                $sbReg = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State' -ErrorAction SilentlyContinue).UEFISecureBootEnabled
+                if ($sbCmd -or $sbReg -eq 1) {
+                    $profile.SecureBootStatus = "Enabled"
+                } else {
+                    $profile.SecureBootStatus = "Disabled or Not Supported"
+                    $profile.NonCompliantReasons.Add("Secure Boot is disabled or unsupported")
+                }
+            } catch {
+                $profile.SecureBootStatus = "Unknown"
+                $profile.NonCompliantReasons.Add("Secure Boot status unknown")
+            }
+
+            # Partition & Firmware
+            $sysVol = Get-Partition -DriveLetter $TargetRoot.TrimEnd(":") -ErrorAction SilentlyContinue
+            if ($sysVol) {
+                $disk = Get-Disk -Number $sysVol.DiskNumber -ErrorAction SilentlyContinue
+                if ($disk) {
+                    $profile.PartitionStyle = $disk.PartitionStyle
+                    if ($disk.PartitionStyle -ne "GPT") {
+                        $profile.NonCompliantReasons.Add("System disk partition style is $($disk.PartitionStyle) (GPT required)")
+                    }
+                }
+            }
+            $profile.FirmwareMode = if ($env:firmware_type) { $env:firmware_type } else { "UEFI" }
+
+            if ($profile.NonCompliantReasons.Count -eq 0) {
+                $profile.IsCompliant = $true
+            }
+        } catch {
+            Write-Log "  [INFO] Hardware profiling notice: $_" "INFO" Gray
+        }
+    } else {
+        # --- Offline Target Drive Profiling ---
+        try {
+            $sysHive = "$TargetRoot\Windows\System32\config\SYSTEM"
+            $softHive = "$TargetRoot\Windows\System32\config\SOFTWARE"
+
+            # Load SYSTEM hive temporarily if not already loaded
+            $needUnloadSys = $false
+            if (-not (Test-Path "HKLM:\OfflineSYSTEMProfile")) {
+                cmd.exe /c "reg load HKLM\OfflineSYSTEMProfile `"$sysHive`" 2>&1" | Out-Null
+                $needUnloadSys = $true
+            }
+
+            if (Test-Path "HKLM:\OfflineSYSTEMProfile") {
+                # Computer Name
+                $cn = Get-ItemProperty -Path "HKLM:\OfflineSYSTEMProfile\ControlSet001\Control\ComputerName\ComputerName" -Name "ComputerName" -ErrorAction SilentlyContinue
+                if ($cn -and $cn.ComputerName) { $profile.ComputerName = $cn.ComputerName }
+
+                # System Info
+                $si = Get-ItemProperty -Path "HKLM:\OfflineSYSTEMProfile\ControlSet001\Control\SystemInformation" -ErrorAction SilentlyContinue
+                if ($si) {
+                    if ($si.SystemManufacturer) { $profile.Manufacturer = $si.SystemManufacturer.Trim() }
+                    if ($si.SystemProductName) { $profile.Model = $si.SystemProductName.Trim() }
+                    if ($si.BIOSVersion) { $profile.BIOSVersion = $si.BIOSVersion.Trim() }
+                    if ($si.BIOSReleaseDate) { $profile.BIOSDate = $si.BIOSReleaseDate.Trim() }
+                }
+
+                # Processor extraction from ACPI Enum
+                $acpiProc = Get-ChildItem -Path "HKLM:\OfflineSYSTEMProfile\ControlSet001\Enum\ACPI" -ErrorAction SilentlyContinue | Where-Object {
+                    $_.PSChildName -match 'GenuineIntel|AuthenticAMD'
+                } | Select-Object -First 1
+                if ($acpiProc) {
+                    $cleanProc = $acpiProc.PSChildName -replace '^.*_-_', '' -replace '_@_', ' @ ' -replace '_', ' '
+                    $profile.Processor = $cleanProc.Trim()
+                }
+
+                if ($needUnloadSys) {
+                    cmd.exe /c "reg unload HKLM\OfflineSYSTEMProfile 2>&1" | Out-Null
+                }
+            }
+
+            # Load SOFTWARE hive temporarily to get Windows Edition / Build
+            $needUnloadSoft = $false
+            if (-not (Test-Path "HKLM:\OfflineSOFTWAREProfile")) {
+                cmd.exe /c "reg load HKLM\OfflineSOFTWAREProfile `"$softHive`" 2>&1" | Out-Null
+                $needUnloadSoft = $true
+            }
+
+            if (Test-Path "HKLM:\OfflineSOFTWAREProfile") {
+                $cv = Get-ItemProperty -Path "HKLM:\OfflineSOFTWAREProfile\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue
+                if ($cv) {
+                    $profile.OSCaption = if ($cv.ProductName) { $cv.ProductName.Trim() } else { "Windows" }
+                    $build = if ($cv.CurrentBuild) { $cv.CurrentBuild } else { "" }
+                    $ubr = if ($cv.UBR) { ".$($cv.UBR)" } else { "" }
+                    $dispVer = if ($cv.DisplayVersion) { " ($($cv.DisplayVersion))" } else { "" }
+                    $profile.OSBuild = "Build $build$ubr$dispVer"
+                }
+
+                if ($needUnloadSoft) {
+                    cmd.exe /c "reg unload HKLM\OfflineSOFTWAREProfile 2>&1" | Out-Null
+                }
+            }
+
+            # Disk / Partition info
+            $part = Get-Partition -DriveLetter $TargetRoot.TrimEnd(":") -ErrorAction SilentlyContinue
+            if ($part) {
+                $disk = Get-Disk -Number $part.DiskNumber -ErrorAction SilentlyContinue
+                if ($disk) {
+                    $profile.PartitionStyle = $disk.PartitionStyle
+                }
+            }
+        } catch {
+            Write-Log "  [INFO] Offline profiling notice: $_" "INFO" Gray
+            cmd.exe /c "reg unload HKLM\OfflineSYSTEMProfile 2>&1" | Out-Null
+            cmd.exe /c "reg unload HKLM\OfflineSOFTWAREProfile 2>&1" | Out-Null
+        }
+    }
+
+    return $profile
+}
+
 # Helper function to auto-detect or mount the Windows 11 ISO
 function Get-MountedSetupDrive {
     # 1. Check if an ISO or USB is already mounted with setup.exe and sources
@@ -373,28 +583,36 @@ $IsOffline = ($TargetDrive -ne $env:SystemDrive.TrimEnd(":"))
 $TargetDrive = "${TargetDrive}:"
 Write-Log "Selected Target Drive: $TargetDrive $(if($IsOffline){'(Offline)'}else{'(Online)'})" "INFO" Magenta
 
-if ($IsOffline) {
-    try {
-        $sysHive = "$TargetDrive\Windows\System32\config\SYSTEM"
-        cmd.exe /c "reg load HKLM\OfflineSYSTEMTemp `"$sysHive`" " 2>&1 | Out-Null
-        
-        $compNameProp = Get-ItemProperty -Path "HKLM:\OfflineSYSTEMTemp\ControlSet001\Control\ComputerName\ComputerName" -Name "ComputerName" -ErrorAction SilentlyContinue
-        $offlineName = if ($compNameProp) { $compNameProp.ComputerName } else { "Offline-$($TargetDrive.TrimEnd(':'))" }
-        
-        cmd.exe /c "reg unload HKLM\OfflineSYSTEMTemp" 2>&1 | Out-Null
+# Query and display comprehensive Target System Specification Profile
+$script:TargetProfile = Get-TargetSystemProfile -TargetRoot $TargetDrive -IsOffline $IsOffline
 
-        $newLogName = "$offlineName-Offline-$TimeStamp.log"
-        $newLogFile = Join-Path -Path $LogDir -ChildPath $newLogName
-        if ($LogFile -ne $newLogFile) {
-            Rename-Item -Path $LogFile -NewName $newLogName -Force -ErrorAction SilentlyContinue
-            $LogFile = $newLogFile
-            Write-Log "Log file renamed to match offline target: $newLogName" "INFO" Gray
-        }
-    } catch {
-        Write-Log "Failed to query offline computer name for log renaming." "WARN" Yellow
-        cmd.exe /c "reg unload HKLM\OfflineSYSTEMTemp" 2>&1 | Out-Null
+if ($IsOffline -and $script:TargetProfile.ComputerName -and $script:TargetProfile.ComputerName -ne "Unknown") {
+    $newLogName = "$($script:TargetProfile.ComputerName)-Offline-$TimeStamp.log"
+    $newLogFile = Join-Path -Path $LogDir -ChildPath $newLogName
+    if ($LogFile -ne $newLogFile) {
+        Rename-Item -Path $LogFile -NewName $newLogName -Force -ErrorAction SilentlyContinue
+        $LogFile = $newLogFile
+        Write-Log "Log file renamed to match offline target: $newLogName" "INFO" Gray
     }
 }
+
+Write-Host "`n====================================================================" -ForegroundColor Cyan
+Write-Host "  TARGET SYSTEM HARDWARE & SPECIFICATION PROFILE" -ForegroundColor Cyan
+Write-Host "====================================================================" -ForegroundColor Cyan
+Write-Log "  Target Mode         : $TargetDrive $(if($IsOffline){'(Offline External Bench Dock)'}else{'(Online Host System)'})" "INFO" White
+Write-Log "  Computer Name       : $($script:TargetProfile.ComputerName)" "INFO" White
+Write-Log "  Manufacturer        : $($script:TargetProfile.Manufacturer)" "INFO" White
+Write-Log "  Model / Product     : $($script:TargetProfile.Model)" "INFO" White
+Write-Log "  Processor (CPU)     : $($script:TargetProfile.Processor)" "INFO" White
+if (-not $IsOffline) {
+    Write-Log "  Physical RAM        : $($script:TargetProfile.RAM)" "INFO" White
+    Write-Log "  TPM Status          : $($script:TargetProfile.TPMStatus)" "INFO" White
+    Write-Log "  Secure Boot         : $($script:TargetProfile.SecureBootStatus)" "INFO" White
+}
+Write-Log "  BIOS Version / Date : $($script:TargetProfile.BIOSVersion) ($($script:TargetProfile.BIOSDate))" "INFO" White
+Write-Log "  Installed Windows   : $($script:TargetProfile.OSCaption) $($script:TargetProfile.OSBuild)" "INFO" White
+Write-Log "  Partition Layout    : $($script:TargetProfile.PartitionStyle)" "INFO" White
+Write-Host "====================================================================`n" -ForegroundColor Cyan
 
 # ------------------------------------------------------------------
 # Progress, Scoring, & Resume Initialization
@@ -558,8 +776,17 @@ if ($ResumeStep -le $StepNum) {
             $ans = Read-Host "Inject Windows 11 hardware bypasses (MoSetup + LabConfig) into offline target hive? [Y/N] (Default: Y)"
             if ($ans -eq "" -or $ans -match "^[yY]") { $applyBypass = $true }
         } else {
-            $ans = Read-Host "Inject Windows 11 hardware bypasses (MoSetup + LabConfig)? [Y/N] (Default: N for supported hardware)"
-            if ($ans -match "^[yY]") { $applyBypass = $true }
+            # Online Live Host: Intelligent Hardware Evaluation (Zero prompts)
+            if ($script:TargetProfile -and $script:TargetProfile.IsCompliant) {
+                Write-Log "  [OK] Live host hardware fully meets native Windows 11 requirements (TPM 2.0, SecureBoot, Supported CPU, RAM)." "SUCCESS" Green
+                Write-Log "  [INFO] Hardware bypasses not required for native setup." "INFO" Gray
+                $applyBypass = $false
+            } else {
+                $blockers = if ($script:TargetProfile -and $script:TargetProfile.NonCompliantReasons.Count -gt 0) { $script:TargetProfile.NonCompliantReasons -join "; " } else { "Unsupported Hardware" }
+                Write-Log "  [INFO] Live host hardware has compatibility blocker(s): $blockers" "INFO" Yellow
+                Write-Log "  [ACTION] Automatically applying Windows 11 compatibility bypass suite (MoSetup + LabConfig)..." "INFO" Yellow
+                $applyBypass = $true
+            }
         }
 
         if ($applyBypass) {

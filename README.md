@@ -162,6 +162,10 @@ Here is an example of what running `Win10to11` on a bench target looks like in t
 * **Automated UEFI Bootloader & BCD Repair**:
   * Unconditionally recreates a pristine UEFI bootloader and BCD store via `bcdboot`, stages universal fallback `bootx64.efi` for strict OEM BIOSes (Acer, Lenovo, HP), and explicitly binds `{bootmgr}` and `{default}` partition device pointers to prevent boot loops and `0x80070003` (`CFreeSystemPartitionDiskSpaceChecker`) setup crashes.
   * Safely unmounts and removes conflicting drive letters from orphaned legacy MBR partitions on converted GPT disks.
+* **Target Hardware & Forensic Spec Profiling**:
+  * Automatically profiles and logs target motherboard, model, BIOS release date, CPU architecture, RAM, and OS build. Extracts specs live via WMI/CIM, or forensically from offline registry hives (`SystemInformation` + `Enum\ACPI`) when analyzing a customer's drive in an external dock.
+* **Intelligent Zero-Prompt Bypass Engine**:
+  * On live host PCs, evaluates TPM 2.0, SecureBoot, CPU generation, and RAM in milliseconds: skips bypasses if fully compliant, or automatically applies MoSetup & LabConfig bypasses without prompting if unsupported hardware is detected. Preserves interactive confirmation for offline drives.
 * **Health Check Caching**:
   * Includes `-SkipHealthChecks` and 24-hour verification markers to eliminate redundant 30-minute SFC/DISM re-scans during iterative bench testing.
 
