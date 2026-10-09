@@ -177,19 +177,14 @@ exit /b
             if (Test-Path $softHive) {
                 cmd.exe /c "reg load HKLM\OfflineSOFTWARE `"$softHive`" 2>&1" | Out-Null
                 cmd.exe /c "reg.exe add `"HKLM\OfflineSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe`" /v UseFilter /t REG_DWORD /d 1 /f 2>&1" | Out-Null
-                cmd.exe /c "reg.exe add `"HKLM\OfflineSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v FilterFullPath /t REG_SZ /d `"%SystemDrive%\`$WINDOWS.~BT\Sources\SetupHost.exe`" /f 2>&1" | Out-Null
-                cmd.exe /c "reg.exe add `"HKLM\OfflineSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v Debugger /t REG_SZ /d `"%SystemDrive%\Scripts\get11.cmd`" /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v FilterFullPath /t REG_SZ /d `"$TargetRoot\`$WINDOWS.~BT\Sources\SetupHost.exe`" /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v Debugger /t REG_SZ /d `"$TargetRoot\Scripts\get11.cmd`" /f 2>&1" | Out-Null
                 cmd.exe /c "reg unload HKLM\OfflineSOFTWARE 2>&1" | Out-Null
             }
         } else {
-            $ifeoKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe"
-            if (-not (Test-Path $ifeoKey)) { New-Item -Path $ifeoKey -Force | Out-Null }
-            Set-ItemProperty -Path $ifeoKey -Name "UseFilter" -Value 1 -Type DWord -Force
-            
-            $ifeoSubKey = Join-Path $ifeoKey "0"
-            if (-not (Test-Path $ifeoSubKey)) { New-Item -Path $ifeoSubKey -Force | Out-Null }
-            Set-ItemProperty -Path $ifeoSubKey -Name "FilterFullPath" -Value "%SystemDrive%\`$WINDOWS.~BT\Sources\SetupHost.exe" -Force
-            Set-ItemProperty -Path $ifeoSubKey -Name "Debugger" -Value "%SystemDrive%\Scripts\get11.cmd" -Force
+            cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe`" /v UseFilter /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+            cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v FilterFullPath /t REG_SZ /d `"$env:SystemDrive\`$WINDOWS.~BT\Sources\SetupHost.exe`" /f 2>&1" | Out-Null
+            cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v Debugger /t REG_SZ /d `"$env:SystemDrive\Scripts\get11.cmd`" /f 2>&1" | Out-Null
         }
         Write-Log "  [OK] Universal IFEO Kernel Bypass installed (SetupHost.exe debugger -> get11.cmd)." "SUCCESS" Green
     } catch {
@@ -2572,18 +2567,14 @@ if ($IsOffline) {
         "bcdboot C:\Windows /f ALL >nul 2>&1",
         "echo.",
         "set `"SETUP_PATH=`"",
-        "if exist `"C:\Win11Setup\setup.exe`" (",
-        "    set `"SETUP_PATH=C:\Win11Setup\setup.exe`"",
-        "    goto :found",
-        ")",
         "for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
         "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.wim`" (",
         "        set `"SETUP_PATH=%%d:\setup.exe`"",
-        "        goto :check_writable",
+        "        goto :found",
         "    )",
         "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.esd`" (",
         "        set `"SETUP_PATH=%%d:\setup.exe`"",
-        "        goto :check_writable",
+        "        goto :found",
         "    )",
         ")",
         ":mount_iso",
@@ -2592,44 +2583,26 @@ if ($IsOffline) {
         "for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
         "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.wim`" (",
         "        set `"SETUP_PATH=%%d:\setup.exe`"",
-        "        goto :check_writable",
+        "        goto :found",
         "    )",
         "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.esd`" (",
         "        set `"SETUP_PATH=%%d:\setup.exe`"",
-        "        goto :check_writable",
+        "        goto :found",
         "    )",
         ")",
-        ":check_writable",
-        "if not defined SETUP_PATH goto :not_found",
-        "set `"SETUP_DRIVE=%SETUP_PATH:~0,2%`"",
-        "copy /y nul `"%SETUP_DRIVE%\__test.tmp`" >nul 2>&1",
-        "if %errorlevel% equ 0 (",
-        "    del `"%SETUP_DRIVE%\__test.tmp`" >nul 2>&1",
-        "    if exist `"%SETUP_DRIVE%\sources\appraiserres.dll`" (",
-        "        attrib -h -s -r `"%SETUP_DRIVE%\sources\appraiserres.dll`" >nul 2>&1",
-        "        copy /y nul `"%SETUP_DRIVE%\sources\appraiserres.dll`" >nul 2>&1",
-        "        attrib +r `"%SETUP_DRIVE%\sources\appraiserres.dll`" >nul 2>&1",
-        "    )",
-        "    goto :found",
-        ")",
-        "echo Source media is read-only (ISO). Extracting to C:\Win11Setup for 0-byte bypass...",
-        "if not exist `"C:\Win11Setup`" mkdir `"C:\Win11Setup`"",
-        "robocopy `"%SETUP_DRIVE%\`" `"C:\Win11Setup`" /E /MT:8 /R:1 /W:1 /XD `"$RECYCLE.BIN`" `"System Volume Information`" >nul",
-        "if exist `"C:\Win11Setup\sources\appraiserres.dll`" (",
-        "    attrib -h -s -r `"C:\Win11Setup\sources\appraiserres.dll`" >nul 2>&1",
-        "    copy /y nul `"C:\Win11Setup\sources\appraiserres.dll`" >nul 2>&1",
-        "    attrib +r `"C:\Win11Setup\sources\appraiserres.dll`" >nul 2>&1",
-        ")",
-        "set `"SETUP_PATH=C:\Win11Setup\setup.exe`"",
         ":found",
-        "echo.",
-        "echo Launching upgrade with: /DynamicUpdate Disable /Compat IgnoreWarning ...",
-        "echo.",
-        "`"%SETUP_PATH%`" /DynamicUpdate Disable /Compat IgnoreWarning",
-        "exit /b",
-        ":not_found",
-        "echo [ERROR] No Windows 11 setup media (USB or mounted ISO) was detected.",
-        "pause"
+        "if defined SETUP_PATH (",
+        "    echo Found Windows Setup media at: %SETUP_PATH%",
+        "    echo Activating real-time appraiser zero-byte neutralizer...",
+        "    start `"`" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"$p = \`"`$env:SystemDrive\\`$WINDOWS.~BT\\Sources\\appraiserres.dll\`"; for (`$i=0; `$i -lt 300; `$i++) { if (Test-Path `$p) { if ((Get-Item `$p).Length -gt 0) { attrib -h -s -r `$p 2>`$null; Clear-Content -Path `$p -Force 2>`$null; attrib +r `$p 2>`$null } }; Start-Sleep -Milliseconds 400 }`"",
+        "    echo Launching upgrade with: /DynamicUpdate Disable /Compat IgnoreWarning ...",
+        "    echo.",
+        "    `"%SETUP_PATH%`" /DynamicUpdate Disable /Compat IgnoreWarning",
+        ") else (",
+        "    echo [ERROR] No Windows 11 setup media (USB or mounted ISO) was detected.",
+        "    echo Please insert your Windows 11 USB drive or mount the Windows 11 ISO and run this script again.",
+        "    pause",
+        ")"
     );
     try {
         [System.IO.File]::WriteAllLines($launcherBat, $batLines);
@@ -2655,55 +2628,6 @@ if ($IsOffline) {
     Write-Host "4) Exit (Setup prepped, will run manually later)" -ForegroundColor White;
     Write-Host "";
     
-    function Get-PreppedSetupPath {
-        param([string]$SourceDriveLetter)
-        $sourceExe = "${SourceDriveLetter}:\setup.exe"
-        $sourceAppraiser = "${SourceDriveLetter}:\sources\appraiserres.dll"
-        
-        $isWritable = $false
-        try {
-            $testFile = "${SourceDriveLetter}:\__writetest.tmp"
-            [System.IO.File]::WriteAllBytes($testFile, @())
-            if (Test-Path $testFile) {
-                Remove-Item -Path $testFile -Force -ErrorAction SilentlyContinue
-                $isWritable = $true
-            }
-        } catch { $isWritable = $false }
-        
-        if ($isWritable) {
-            Write-Log "  [INFO] Installation media ($SourceDriveLetter:) is writable. Applying 0-byte appraiser patch directly..." "INFO" Cyan
-            if (Test-Path $sourceAppraiser) {
-                cmd.exe /c "attrib -h -s -r `"$sourceAppraiser`" 2>&1" | Out-Null
-                [System.IO.File]::WriteAllBytes($sourceAppraiser, @())
-                cmd.exe /c "attrib +r `"$sourceAppraiser`" 2>&1" | Out-Null
-                Write-Log "  [OK] Successfully replaced $sourceAppraiser with 0-byte bypass." "SUCCESS" Green
-            }
-            return $sourceExe
-        } else {
-            $stageDir = "$env:SystemDrive\Win11Setup"
-            $stageExe = Join-Path $stageDir "setup.exe"
-            $stageAppraiser = Join-Path $stageDir "sources\appraiserres.dll"
-            $hasWim = (Test-Path (Join-Path $stageDir "sources\install.wim")) -or (Test-Path (Join-Path $stageDir "sources\install.esd"))
-            
-            if ((Test-Path $stageExe) -and $hasWim) {
-                Write-Log "  [OK] Found existing prepped Windows 11 setup at: $stageDir" "SUCCESS" Green
-            } else {
-                Write-Log "  [ACTION] Source media ($SourceDriveLetter:) is read-only ISO. Extracting to local SSD ($stageDir)..." "INFO" Yellow
-                Write-Host "  Fast-copying setup files to local SSD for 0-byte TPM/SecureBoot bypass (takes ~60-90s)..." -ForegroundColor Cyan
-                if (-not (Test-Path $stageDir)) { New-Item -ItemType Directory -Path $stageDir -Force | Out-Null }
-                $null = cmd.exe /c "robocopy `"${SourceDriveLetter}:\`" `"$stageDir`" /E /MT:8 /R:1 /W:1 /XD `"`$RECYCLE.BIN`" `"System Volume Information`" 2>&1"
-            }
-            
-            if (Test-Path $stageAppraiser) {
-                cmd.exe /c "attrib -h -s -r `"$stageAppraiser`" 2>&1" | Out-Null
-                [System.IO.File]::WriteAllBytes($stageAppraiser, @())
-                cmd.exe /c "attrib +r `"$stageAppraiser`" 2>&1" | Out-Null
-                Write-Log "  [OK] Staged 0-byte appraiserres.dll on local SSD: $stageAppraiser" "SUCCESS" Green
-            }
-            return $stageExe
-        }
-    }
-
     if ($AutoLaunch) {
         $choice = "1"
         Write-Log "[-AutoLaunch active] Automatically selecting Option 1 (Recommended Setup)..." "INFO" Green
@@ -2726,7 +2650,7 @@ if ($IsOffline) {
             if ($isoDrive) {
                 Set-AppraiserBypass -TargetRoot "$($env:SystemDrive)\"
                 Install-AveYoBypass -TargetRoot "$($env:SystemDrive)\"
-                $setupPath = Get-PreppedSetupPath -SourceDriveLetter $isoDrive
+                $setupPath = "${isoDrive}:\setup.exe";
                 $setupArgs = "/DynamicUpdate Disable /Compat IgnoreWarning";
                 $manualCmd = "`"$setupPath`" $setupArgs";
                 $manualPs = "& `"$setupPath`" $setupArgs";
@@ -2782,7 +2706,7 @@ if ($IsOffline) {
             if ($isoDrive) {
                 Set-AppraiserBypass -TargetRoot "$($env:SystemDrive)\"
                 Install-AveYoBypass -TargetRoot "$($env:SystemDrive)\"
-                $setupPath = Get-PreppedSetupPath -SourceDriveLetter $isoDrive
+                $setupPath = "${isoDrive}:\setup.exe";
                 $setupArgs = "/DynamicUpdate Disable";
                 $manualCmd = "`"$setupPath`" $setupArgs";
                 $manualPs = "& `"$setupPath`" $setupArgs";
@@ -2823,7 +2747,7 @@ if ($IsOffline) {
             if ($isoDrive) {
                 Set-AppraiserBypass -TargetRoot "$($env:SystemDrive)\"
                 Install-AveYoBypass -TargetRoot "$($env:SystemDrive)\"
-                $setupPath = Get-PreppedSetupPath -SourceDriveLetter $isoDrive
+                $setupPath = "${isoDrive}:\setup.exe";
                 $setupArgs = "/Auto Upgrade /DynamicUpdate Disable /Compat IgnoreWarning";
                 $manualCmd = "`"$setupPath`" $setupArgs";
                 $manualPs = "& `"$setupPath`" $setupArgs";
