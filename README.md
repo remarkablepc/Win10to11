@@ -57,7 +57,9 @@
 
 **Win10to11** is an open-source PowerShell script designed for bench technicians, sysadmins, and advanced users. It automates the tedious, repetitive troubleshooting required when Windows 10 repeatedly fails or rolls back during an in-place upgrade to Windows 11.
 
-Instead of waiting an hour for Windows Setup to crash and sifting through cryptic setup logs, Win10to11 performs pre-flight checks and neutralizes predictable blockers—such as leftover antivirus filter drivers, broken recovery partitions, MBR disk layouts, and conflicting OEM drivers—*before* setup runs.
+Unlike clean-install utilities that require wiping the system drive and spending hours reinstalling client software and reconfiguring accounts, **Win10to11 specializes in seamless In-Place Upgrades**—preserving 100% of personal files, desktop layouts, licensed software, and settings even on unsupported 2012-era Legacy BIOS / MBR hardware.
+
+Instead of waiting an hour for Windows Setup to crash and sifting through cryptic setup logs, Win10to11 performs pre-flight checks and neutralizes predictable blockers—such as leftover antivirus filter drivers, broken recovery partitions, MBR disk layouts, stale Panther cache locks, and conflicting OEM drivers—*before* setup runs.
 
 ---
 
@@ -66,7 +68,7 @@ Instead of waiting an hour for Windows Setup to crash and sifting through crypti
 | Environment / Hardware | Failure Symptom | Underlying Root Cause | Win10to11 Action & Outcome |
 | :--- | :--- | :--- | :--- |
 | **Dell Latitude (Workstation SSD)** | Rollback at SafeOS (`0x801F0005` / `0x80070714`) | Uninstalled Avast left active kernel minifilters (`aswSnx.sys`, Altitude 137600) and disk `UpperFilter` (`aswArDisk`) blocking SafeOS WIM reparse queries. | Automatically unhooked filter services, sanitized class `UpperFilters` to `partmgr`. **In-place upgrade succeeded.** |
-| **Acer Aspire E1-731 (Legacy BIOS / SSD)** | TPM 2.0 & Secure Boot hard blocks; unbootable on UEFI/GPT attempt | 2012 Legacy BIOS lacks stable UEFI NVRAM; SetupHost evaluated stale unpatched OEM appraisal cache. | Detected legacy platform advisory, preserved native MBR cold-boot, purged Panther cache, applied AveYo V13 kernel IFEO interceptor & launched directly from mounted ISO without C:\ extraction. **Windows 11 upgrade installed cleanly.** |
+| **Legacy Laptop (2012 Legacy BIOS / MBR SSD)** | Hard TPM 2.0 & Secure Boot blocks; unbootable on UEFI/GPT attempt | 2012 Legacy BIOS lacks stable UEFI NVRAM; SetupHost evaluated stale unpatched OEM appraisal cache. | Detected legacy platform advisory, preserved native MBR cold-boot, purged Panther cache, applied AveYo V13 kernel IFEO interceptor & launched directly from mounted ISO without C:\ extraction. **Windows 11 in-place upgrade completed with 100% of apps, files, and desktop preserved.** |
 | **HP EliteDesk (Enterprise PC)** | Pre-Finalize Crash (`0x80070714`) | Missing or damaged `Winre.wim` and broken partition GUID in `ReAgent.xml`. | Auto-detected mounted ISO, unpacked clean `Winre.wim` in ~15s, re-indexed recovery environment. **Upgrade completed.** |
 | **Lenovo ThinkCentre (Docked Drive)** | Blocked by Legacy MBR partition style | Drive connected via USB bench dock; Windows native `mbr2gpt` cannot convert secondary or external disks. | Verified BitLocker status, executed safe dry-run test, created binary MBR backup, converted to GPT via `gptgen`, staged ESP + BCD. **Booted UEFI and upgraded.** |
 
