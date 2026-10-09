@@ -124,7 +124,27 @@ function Set-AppraiserBypass {
         # Write 0-byte stub and lock as Read-Only
         [System.IO.File]::WriteAllBytes($targetAppraiserPath, @())
         cmd.exe /c "attrib +r `"$targetAppraiserPath`" 2>&1" | Out-Null
-        Write-Log "  [OK] Staged 0-byte appraiserres.dll hardware bypass at $targetAppraiserPath" "SUCCESS" Green
+
+        # Neutralize stale Panther CompatData and Appraiser cache files from previous failed runs
+        $pantherPath = Join-Path -Path $btSources -ChildPath "Panther"
+        if (Test-Path $pantherPath) {
+            Get-ChildItem -Path $pantherPath -Filter "*compatdata*.xml" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $pantherPath -Filter "*Appraiser*.xml" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        }
+
+        # Clear stale AppCompatFlags markers on live system so Setup does not reuse cached block state
+        if ($TargetRoot.TrimEnd('\') -eq $env:SystemDrive) {
+            $staleKeys = @(
+                "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\CompatMarkers",
+                "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\TargetVersionUpgradeExperienceIndicators",
+                "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Appraiser"
+            )
+            foreach ($k in $staleKeys) {
+                if (Test-Path $k) { Remove-Item -Path $k -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        
+        Write-Log "  [OK] Staged 0-byte appraiserres.dll and purged stale compatibility cache at $targetAppraiserPath" "SUCCESS" Green
     } catch {
         Write-Log "  [INFO] Appraiser bypass staging note: $_" "INFO" Gray
     }
@@ -140,7 +160,35 @@ function Install-AveYoBypass {
         $scriptsDir = Join-Path $TargetRoot "Scripts"
         if (-not (Test-Path $scriptsDir)) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
         $get11Path = Join-Path $scriptsDir "get11.cmd"
-        
+
+        # Search for official Skip_TPM_Check_on_Dynamic_Update.cmd in script dir, bin, or USB
+        $bypassCandidates = @(
+            (Join-Path $PSScriptRoot "Skip_TPM_Check_on_Dynamic_Update.cmd"),
+            (Join-Path $PSScriptRoot "WINTools\bin\win10to11\Skip_TPM_Check_on_Dynamic_Update.cmd"),
+            "$env:SystemDrive\Skip_TPM_Check_on_Dynamic_Update.cmd"
+        )
+        $officialBypass = $null
+        foreach ($cand in $bypassCandidates) {
+            if ($cand -and (Test-Path $cand)) {
+                $officialBypass = $cand
+                break
+            }
+        }
+
+        # If running live and official script is available, invoke it natively
+        if (-not $IsOffline -and $officialBypass) {
+            Write-Log "  [ACTION] Executing official AveYo bypass suite ($officialBypass install)..." "INFO" Gray
+            $instRes = cmd.exe /c "`"$officialBypass`" install 2>&1"
+            Write-Log "  [OK] AveYo bypass suite executed successfully." "SUCCESS" Green
+        }
+
+        # If official script is found, stage a copy into target drive for convenience
+        if ($officialBypass) {
+            Copy-Item -Path $officialBypass -Destination (Join-Path $TargetRoot "Skip_TPM_Check_on_Dynamic_Update.cmd") -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path $officialBypass -Destination (Join-Path $scriptsDir "Skip_TPM_Check_on_Dynamic_Update.cmd") -Force -ErrorAction SilentlyContinue
+        }
+
+        # Ensure get11.cmd is written to Scripts\get11.cmd (v13 IFEO debugger payload)
         $get11Content = @"
 @echo off & title get 11 on 'unsupported' PC || AveYo
 set CLI=%*& set SOURCES=%SystemDrive%\`$WINDOWS.~BT\Sources& set MEDIA=.& set MOD=CLI& set PRE=WUA& set /a VER=11
@@ -2555,54 +2603,106 @@ if ($IsOffline) {
 
     # Generate 1-click upgrade launcher on target drive root
     $launcherBat = "$TargetDrive\Launch_Win11_Upgrade.bat"
+
+    # Stage AveYo bypass script onto target drive so launcher finds it immediately
+    $bypassCandidates = @(
+        (Join-Path $PSScriptRoot "Skip_TPM_Check_on_Dynamic_Update.cmd"),
+        (Join-Path $PSScriptRoot "WINTools\bin\win10to11\Skip_TPM_Check_on_Dynamic_Update.cmd")
+    )
+    foreach ($cand in $bypassCandidates) {
+        if (Test-Path $cand) {
+            Copy-Item -Path $cand -Destination (Join-Path $TargetDrive "Skip_TPM_Check_on_Dynamic_Update.cmd") -Force -ErrorAction SilentlyContinue
+            break
+        }
+    }
+
     $batLines = @(
         "@echo off",
         "setlocal",
-        ":: Windows 11 Upgrade Launcher created by Win10to11 Toolkit",
-        "echo ==============================================================",
-        "echo Windows 11 In-Place Upgrade Launcher (Bypass + Safe Flags)",
-        "echo ==============================================================",
+        "title Windows 11 In-Place Upgrade Launcher (Administrator)",
+        "",
+        ":: 1. Check for Administrator Privileges and Auto-Elevate",
+        "net session >nul 2>&1",
+        "if %errorlevel% equ 0 goto :is_admin",
+        "",
+        "echo [ACTION] Requesting Administrator privileges...",
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"Start-Process cmd.exe -ArgumentList '/k \""\""%~f0\""\""' -Verb RunAs`"",
+        "exit /b",
+        "",
+        ":is_admin",
+        "cd /d `"%~dp0`"",
+        "",
+        "echo ==============================================================================",
+        "echo   Windows 11 In-Place Upgrade Launcher - RemarkablePC",
+        "echo   AveYo Universal IFEO Interceptor + Direct ISO Mount",
+        "echo ==============================================================================",
         "echo.",
-        "echo [ACTION] Verifying motherboard boot registration...",
-        "bcdboot C:\Windows /f ALL >nul 2>&1",
+        "",
+        ":: 2. Locate AveYo bypass script",
+        "set `"BYPASS_SCRIPT=`"",
+        "if exist `"%~dp0Skip_TPM_Check_on_Dynamic_Update.cmd`" set `"BYPASS_SCRIPT=%~dp0Skip_TPM_Check_on_Dynamic_Update.cmd`"",
+        "if not defined BYPASS_SCRIPT if exist `"%~dp0WINTools\bin\win10to11\Skip_TPM_Check_on_Dynamic_Update.cmd`" set `"BYPASS_SCRIPT=%~dp0WINTools\bin\win10to11\Skip_TPM_Check_on_Dynamic_Update.cmd`"",
+        "",
+        "if not defined BYPASS_SCRIPT goto :fallback_bypass",
+        "",
+        "echo [1/3] Installing AveYo Universal Hardware Bypass (V13)...",
+        "call `"%BYPASS_SCRIPT%`" install",
+        "goto :after_bypass",
+        "",
+        ":fallback_bypass",
+        "echo [WARN] AveYo script not found, applying native registry bypass...",
+        "reg.exe add `"HKLM\SYSTEM\Setup\MoSetup`" /v AllowUpgradesWithUnsupportedTPMOrCPU /t REG_DWORD /d 1 /f >nul",
+        "reg.exe add `"HKLM\SYSTEM\Setup\LabConfig`" /v BypassTPMCheck /t REG_DWORD /d 1 /f >nul",
+        "reg.exe add `"HKLM\SYSTEM\Setup\LabConfig`" /v BypassSecureBootCheck /t REG_DWORD /d 1 /f >nul",
+        "reg.exe add `"HKLM\SYSTEM\Setup\LabConfig`" /v BypassCPUCheck /t REG_DWORD /d 1 /f >nul",
+        "",
+        ":after_bypass",
+        ":: 3. Neutralize any stale unpatched appraiserres.dll from previous runs",
+        "echo [2/3] Neutralizing setup cache in `$WINDOWS.~BT...",
+        "if exist `"%SystemDrive%\`$WINDOWS.~BT\Sources\appraiserres.dll`" attrib -h -s -r `"%SystemDrive%\`$WINDOWS.~BT\Sources\appraiserres.dll`" >nul 2>&1",
+        "if exist `"%SystemDrive%\`$WINDOWS.~BT\Sources\appraiserres.dll`" del /f /q `"%SystemDrive%\`$WINDOWS.~BT\Sources\appraiserres.dll`" >nul 2>&1",
+        "",
+        ":: 4. Locate and Auto-Mount Windows 11 ISO",
+        "echo [3/3] Locating and mounting Windows 11 ISO...",
+        "set `"SETUP_DRIVE=`"",
+        "for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
+        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.wim`" set `"SETUP_DRIVE=%%d`"",
+        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.esd`" set `"SETUP_DRIVE=%%d`"",
+        ")",
+        "",
+        "if defined SETUP_DRIVE goto :do_launch",
+        "",
+        "echo   Scanning and mounting ISO...",
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"`$iso = Get-ChildItem -Path '%~dp0ISOs\Windows\*Win11*.iso', '%~dp0*Win11*.iso', '%~dp0..\..\ISOs\Windows\*Win11*.iso' -ErrorAction SilentlyContinue | Select-Object -First 1; if (`$iso) { Write-Host '  Mounting:' `$iso.FullName; Mount-DiskImage -ImagePath `$iso.FullName -PassThru | Out-Null }`"",
+        "",
+        "ping 127.0.0.1 -n 3 >nul",
+        "",
+        "for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
+        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.wim`" set `"SETUP_DRIVE=%%d`"",
+        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.esd`" set `"SETUP_DRIVE=%%d`"",
+        ")",
+        "",
+        ":do_launch",
+        "if defined SETUP_DRIVE goto :ready_to_launch",
+        "",
         "echo.",
-        "set `"SETUP_PATH=`"",
-        "for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
-        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.wim`" (",
-        "        set `"SETUP_PATH=%%d:\setup.exe`"",
-        "        goto :found",
-        "    )",
-        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.esd`" (",
-        "        set `"SETUP_PATH=%%d:\setup.exe`"",
-        "        goto :found",
-        "    )",
-        ")",
-        ":mount_iso",
-        "echo [ACTION] Searching for Windows 11 ISO on connected USB and local drives...",
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"$drives = (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Name -match '^[A-Z]$' }).Root; $cand = @(); foreach ($d in $drives) { $cand += (Get-ChildItem -Path $d -Filter '*Win11*.iso' -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName) }; $best = $cand | Select-Object -Unique | ForEach-Object { Get-Item $_ } | Sort-Object Length -Descending | Select-Object -First 1; if ($best) { Write-Host 'Auto-mounting ISO:' $best.FullName; Mount-DiskImage -ImagePath $best.FullName -PassThru | Out-Null }`"",
-        "for %%d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do (",
-        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.wim`" (",
-        "        set `"SETUP_PATH=%%d:\setup.exe`"",
-        "        goto :found",
-        "    )",
-        "    if exist `"%%d:\setup.exe`" if exist `"%%d:\sources\install.esd`" (",
-        "        set `"SETUP_PATH=%%d:\setup.exe`"",
-        "        goto :found",
-        "    )",
-        ")",
-        ":found",
-        "if defined SETUP_PATH (",
-        "    echo Found Windows Setup media at: %SETUP_PATH%",
-        "    echo Activating real-time appraiser zero-byte neutralizer...",
-        "    start `"`" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"$p = \`"`$env:SystemDrive\\`$WINDOWS.~BT\\Sources\\appraiserres.dll\`"; for (`$i=0; `$i -lt 300; `$i++) { if (Test-Path `$p) { if ((Get-Item `$p).Length -gt 0) { attrib -h -s -r `$p 2>`$null; Clear-Content -Path `$p -Force 2>`$null; attrib +r `$p 2>`$null } }; Start-Sleep -Milliseconds 400 }`"",
-        "    echo Launching upgrade with: /DynamicUpdate Disable /Compat IgnoreWarning ...",
-        "    echo.",
-        "    `"%SETUP_PATH%`" /DynamicUpdate Disable /Compat IgnoreWarning",
-        ") else (",
-        "    echo [ERROR] No Windows 11 setup media (USB or mounted ISO) was detected.",
-        "    echo Please insert your Windows 11 USB drive or mount the Windows 11 ISO and run this script again.",
-        "    pause",
-        ")"
+        "echo [ERROR] Could not find or mount Windows 11 setup media.",
+        "echo Please make sure the USB drive is connected or mount the ISO manually.",
+        "echo.",
+        "pause",
+        "exit /b 1",
+        "",
+        ":ready_to_launch",
+        "echo.",
+        "echo ==============================================================================",
+        "echo   Found Windows 11 Setup at: %SETUP_DRIVE%:\setup.exe",
+        "echo   Hardware bypass is active. Launching Setup...",
+        "echo ==============================================================================",
+        "echo.",
+        "echo Windows 11 Setup has started. Follow the on-screen prompts to keep files and apps.",
+        "echo.",
+        "`"%SETUP_DRIVE%:\setup.exe`" /DynamicUpdate Disable /Compat IgnoreWarning",
+        "pause"
     );
     try {
         [System.IO.File]::WriteAllLines($launcherBat, $batLines);

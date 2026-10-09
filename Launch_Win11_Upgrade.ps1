@@ -49,35 +49,63 @@ try {
 # 2. Install AveYo Universal IFEO Kernel Bypass (SetupHost Debugger Interceptor)
 Write-Host "[2/4] Installing Universal IFEO Kernel Bypass (SetupHost.exe Interceptor)..." -ForegroundColor Yellow
 try {
-    $scriptsDir = "$env:SystemDrive\Scripts"
-    if (-not (Test-Path $scriptsDir)) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
-    $get11 = Join-Path $scriptsDir "get11.cmd"
-    $get11Content = @"
-@echo off
-set "CLI=%*"
-set "SOURCES=%SystemDrive%\`$WINDOWS.~BT\Sources"
-if not exist "%SOURCES%\SetupHost.exe" exit /b
-if not exist "%SOURCES%\WindowsUpdateBox.exe" (
-    mklink /h "%SOURCES%\WindowsUpdateBox.exe" "%SOURCES%\SetupHost.exe" >nul 2>&1
-    if not exist "%SOURCES%\WindowsUpdateBox.exe" copy /y "%SOURCES%\SetupHost.exe" "%SOURCES%\WindowsUpdateBox.exe" >nul 2>&1
-)
-if exist "%SOURCES%\appraiserres.dll" (
-    attrib -h -s -r "%SOURCES%\appraiserres.dll" >nul 2>&1
-    del /f /q "%SOURCES%\appraiserres.dll" >nul 2>&1
-)
-cd.>"%SOURCES%\appraiserres.dll"
-attrib +r "%SOURCES%\appraiserres.dll" >nul 2>&1
-reg add "HKLM\SYSTEM\Setup\MoSetup" /f /v AllowUpgradesWithUnsupportedTPMorCPU /d 1 /t reg_dword >nul 2>&1
-"%SOURCES%\WindowsUpdateBox.exe" %CLI%
+    $bypassCandidates = @(
+        (Join-Path $PSScriptRoot "Skip_TPM_Check_on_Dynamic_Update.cmd"),
+        (Join-Path $PSScriptRoot "WINTools\bin\win10to11\Skip_TPM_Check_on_Dynamic_Update.cmd"),
+        "$env:SystemDrive\Skip_TPM_Check_on_Dynamic_Update.cmd"
+    )
+    $officialBypass = $null
+    foreach ($cand in $bypassCandidates) {
+        if ($cand -and (Test-Path $cand)) {
+            $officialBypass = $cand
+            break
+        }
+    }
+
+    if ($officialBypass) {
+        cmd.exe /c "`"$officialBypass`" install" | Out-Null
+        Write-Host "  [OK] AveYo Universal Hardware Bypass suite (V13) installed." -ForegroundColor Green
+    } else {
+        $scriptsDir = "$env:SystemDrive\Scripts"
+        if (-not (Test-Path $scriptsDir)) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
+        $get11 = Join-Path $scriptsDir "get11.cmd"
+        $get11Content = @"
+@echo off & title get 11 on 'unsupported' PC || AveYo
+set CLI=%*& set SOURCES=%SystemDrive%\`$WINDOWS.~BT\Sources& set MEDIA=.& set MOD=CLI& set PRE=WUA& set /a VER=11
+if not defined CLI (exit /b) else if not exist %SOURCES%\SetupHost.exe (exit /b)
+if not exist %SOURCES%\WindowsUpdateBox.exe mklink /h %SOURCES%\WindowsUpdateBox.exe %SOURCES%\SetupHost.exe
+reg add HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate /f /v DisableWUfBSafeguards /d 1 /t reg_dword >nul 2>nul
+reg add HKLM\SYSTEM\Setup\MoSetup /f /v AllowUpgradesWithUnsupportedTPMorCPU /d 1 /t reg_dword >nul 2>nul
+set OPT=/Compat IgnoreWarning /MigrateDrivers All /Telemetry Disable
+set /a restart_application=0x800705BB & (call set CLI=%%CLI:%1 =%%)
+set /a incorrect_parameter=0x80070057 & (set SRV=%CLI:/Product Client =%)
+set /a launch_option_error=0xc190010a & (set SRV=%SRV:/Product Server =%)
+for %%W in (%CLI%) do if /i %%W == /PreDownload (set MOD=SRV)
+for %%W in (%CLI%) do if /i %%W == /InstallFile (set PRE=ISO& set "MEDIA=") else if not defined MEDIA set "MEDIA=%%~dpW"
+if %VER% == 11 for %%W in ("%MEDIA%appraiserres.dll") do if exist %%W if %%~zW == 0 set AlreadyPatched=1 & set /a VER=10
+if %VER% == 11 findstr /r "P.r.o.d.u.c.t.V.e.r.s.i.o.n...1.0.\..0.\..2.[2-9]" %SOURCES%\SetupHost.exe >nul 2>nul || set /a VER=10
+if %VER% == 11 if not exist "%MEDIA%EI.cfg" (echo;[Channel]>%SOURCES%\EI.cfg & echo;_Default>>%SOURCES%\EI.cfg)
+if %VER%_%PRE% == 11_ISO (%SOURCES%\WindowsUpdateBox.exe /Product Server /PreDownload /Quiet %OPT%)
+if %VER%_%PRE% == 11_ISO (del /f /q %SOURCES%\appraiserres.dll 2>nul & cd.>%SOURCES%\appraiserres.dll & call :canary)
+if %VER%_%MOD% == 11_SRV (set ARG=%OPT% %SRV% /Product Server)
+if %VER%_%MOD% == 11_CLI (set ARG=%OPT% %CLI%)
+%SOURCES%\WindowsUpdateBox.exe %ARG%
+if %errorlevel% == %restart_application% (call :canary & %SOURCES%\WindowsUpdateBox.exe %ARG%)
+exit /b
+
+:canary
+set C=  `$X='%SOURCES%\hwreqchk.dll'; `$Y='SQ_TpmVersion GTE 1'; `$Z='SQ_TpmVersion GTE 0'; if (test-path `$X) { try { takeown.exe /f `$X /a; icacls.exe `$X /grant *S-1-5-32-544:f; attrib -R -S `$X; [io.file]::OpenWrite(`$X).close() } catch { return }; `$R=[Text.Encoding]::UTF8.GetBytes(`$Z); `$l=`$R.Length; `$i=2; `$w=!1; `$B=[io.file]::ReadAllBytes(`$X); `$H=[BitConverter]::ToString(`$B) -replace '-'; `$S=[BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes(`$Y)) -replace '-'; do { `$i=`$H.IndexOf(`$S, `$i + 2); if (`$i -gt 0) { `$w=!0; for (`$k=0; `$k -lt `$l; `$k++) { `$B[`$k + `$i / 2]=`$R[`$k] } } } until (`$i -lt 1); if (`$w) { [io.file]::WriteAllBytes(`$X, `$B); [GC]::Collect() } }
+if %VER%_%PRE% == 11_ISO powershell -nop -c iex(`$env:C) >nul 2>nul
 exit /b
 "@
-    [System.IO.File]::WriteAllText($get11, $get11Content, [System.Text.Encoding]::ASCII)
+        [System.IO.File]::WriteAllText($get11, $get11Content, [System.Text.Encoding]::ASCII)
 
-    cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe`" /v UseFilter /t REG_DWORD /d 1 /f 2>&1" | Out-Null
-    cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v FilterFullPath /t REG_SZ /d `"$env:SystemDrive\`$WINDOWS.~BT\Sources\SetupHost.exe`" /f 2>&1" | Out-Null
-    cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v Debugger /t REG_SZ /d `"$env:SystemDrive\Scripts\get11.cmd`" /f 2>&1" | Out-Null
+        cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe`" /v UseFilter /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+        cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v FilterFullPath /t REG_SZ /d `"$env:SystemDrive\`$WINDOWS.~BT\Sources\SetupHost.exe`" /f 2>&1" | Out-Null
+        cmd.exe /c "reg.exe add `"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v Debugger /t REG_SZ /d `"$env:SystemDrive\Scripts\get11.cmd`" /f 2>&1" | Out-Null
 
-    Write-Host "  [OK] IFEO Kernel Interceptor registered (SetupHost.exe -> get11.cmd)." -ForegroundColor Green
+        Write-Host "  [OK] IFEO Kernel Interceptor registered (SetupHost.exe -> get11.cmd)." -ForegroundColor Green
+    }
 } catch {
     Write-Host "  [WARN] IFEO setup notice: $_" -ForegroundColor Yellow
 }
