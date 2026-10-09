@@ -101,7 +101,7 @@ function Get-ArchiveExtractor {
     return $null
 }
 
-# Helper to stage appraiserres.dll bypass (Sourced from User PC or Generated Locally)
+# Helper to stage 0-byte appraiserres.dll bypass (Rufus technique)
 function Set-AppraiserBypass {
     param(
         [string]$TargetRoot,
@@ -115,45 +115,85 @@ function Set-AppraiserBypass {
         }
         $targetAppraiserPath = Join-Path -Path $btSources -ChildPath "appraiserres.dll"
         
-        # 1. Search the user's PC & attached drives for an existing Windows 10/Setup appraiserres.dll
-        $localCandidates = @(
-            (Join-Path $ScriptDir "appraiserres.dll"),
-            "C:\`$WINDOWS.~BT\Sources\appraiserres.dll",
-            "C:\ESD\Windows\sources\appraiserres.dll"
-        )
-        foreach ($d in (Get-PSDrive -PSProvider FileSystem | Where-Object Name -match "^[A-Z]$")) {
-            $localCandidates += "$($d.Name):\sources\appraiserres.dll"
-            $localCandidates += "$($d.Name):\`$WINDOWS.~BT\Sources\appraiserres.dll"
-            $localCandidates += "$($d.Name):\ESD\Windows\sources\appraiserres.dll"
+        # Neutralize any existing copy (including OEM/ESD copies that enforce TPM/Secure Boot)
+        if (Test-Path $targetAppraiserPath) {
+            cmd.exe /c "attrib -h -s -r `"$targetAppraiserPath`" 2>&1" | Out-Null
+            Remove-Item -Path $targetAppraiserPath -Force -ErrorAction SilentlyContinue
         }
-
-        $foundLocal = $null
-        foreach ($cand in $localCandidates) {
-            if ((Test-Path $cand) -and (Get-Item $cand).Length -gt 0) {
-                $targetNorm = $targetAppraiserPath.TrimEnd('\').ToLower()
-                $candNorm = $cand.TrimEnd('\').ToLower()
-                if ($candNorm -ne $targetNorm) {
-                    $foundLocal = $cand
-                    break
-                }
-            }
-        }
-
-        if ($foundLocal) {
-            Write-Log "  [ACTION] Sourcing existing appraiserres.dll from user PC ($foundLocal)..." "INFO" Green
-            Copy-Item -Path $foundLocal -Destination $targetAppraiserPath -Force
-            cmd.exe /c "attrib +r `"$targetAppraiserPath`" 2>&1" | Out-Null
-            Write-Log "  [OK] Successfully staged PC-sourced appraiserres.dll to $targetAppraiserPath" "SUCCESS" Green
-            return
-        }
-
-        # 2. If not found on the PC, generate the 0-byte dummy bypass directly on this PC (100% offline, no downloads)
-        Write-Log "  [ACTION] Generating 0-byte appraiserres.dll bypass locally on this PC (Rufus technique)..." "INFO" Yellow
+        
+        # Write 0-byte stub and lock as Read-Only
         [System.IO.File]::WriteAllBytes($targetAppraiserPath, @())
         cmd.exe /c "attrib +r `"$targetAppraiserPath`" 2>&1" | Out-Null
-        Write-Log "  [OK] Generated and staged 0-byte appraiserres.dll hardware bypass at $targetAppraiserPath" "SUCCESS" Green
+        Write-Log "  [OK] Staged 0-byte appraiserres.dll hardware bypass at $targetAppraiserPath" "SUCCESS" Green
     } catch {
         Write-Log "  [INFO] Appraiser bypass staging note: $_" "INFO" Gray
+    }
+}
+
+# Helper to install AveYo's battle-tested IFEO Kernel Debugger bypass for SetupHost.exe
+function Install-AveYoBypass {
+    param(
+        [string]$TargetRoot = "$env:SystemDrive\",
+        [bool]$IsOffline = $false
+    )
+    try {
+        $scriptsDir = Join-Path $TargetRoot "Scripts"
+        if (-not (Test-Path $scriptsDir)) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
+        $get11Path = Join-Path $scriptsDir "get11.cmd"
+        
+        $get11Content = @"
+@echo off & title get 11 on 'unsupported' PC || AveYo
+set CLI=%*& set SOURCES=%SystemDrive%\`$WINDOWS.~BT\Sources& set MEDIA=.& set MOD=CLI& set PRE=WUA& set /a VER=11
+if not defined CLI (exit /b) else if not exist %SOURCES%\SetupHost.exe (exit /b)
+if not exist %SOURCES%\WindowsUpdateBox.exe mklink /h %SOURCES%\WindowsUpdateBox.exe %SOURCES%\SetupHost.exe
+reg add HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate /f /v DisableWUfBSafeguards /d 1 /t reg_dword >nul 2>nul
+reg add HKLM\SYSTEM\Setup\MoSetup /f /v AllowUpgradesWithUnsupportedTPMorCPU /d 1 /t reg_dword >nul 2>nul
+set OPT=/Compat IgnoreWarning /MigrateDrivers All /Telemetry Disable
+set /a restart_application=0x800705BB & (call set CLI=%%CLI:%1 =%%)
+set /a incorrect_parameter=0x80070057 & (set SRV=%CLI:/Product Client =%)
+set /a launch_option_error=0xc190010a & (set SRV=%SRV:/Product Server =%)
+for %%W in (%CLI%) do if /i %%W == /PreDownload (set MOD=SRV)
+for %%W in (%CLI%) do if /i %%W == /InstallFile (set PRE=ISO& set "MEDIA=") else if not defined MEDIA set "MEDIA=%%~dpW"
+if %VER% == 11 for %%W in ("%MEDIA%appraiserres.dll") do if exist %%W if %%~zW == 0 set AlreadyPatched=1 & set /a VER=10
+if %VER% == 11 findstr /r "P.r.o.d.u.c.t.V.e.r.s.i.o.n...1.0.\..0.\..2.[2-9]" %SOURCES%\SetupHost.exe >nul 2>nul || set /a VER=10
+if %VER% == 11 if not exist "%MEDIA%EI.cfg" (echo;[Channel]>%SOURCES%\EI.cfg & echo;_Default>>%SOURCES%\EI.cfg)
+if %VER%_%PRE% == 11_ISO (%SOURCES%\WindowsUpdateBox.exe /Product Server /PreDownload /Quiet %OPT%)
+if %VER%_%PRE% == 11_ISO (del /f /q %SOURCES%\appraiserres.dll 2>nul & cd.>%SOURCES%\appraiserres.dll & call :canary)
+if %VER%_%MOD% == 11_SRV (set ARG=%OPT% %SRV% /Product Server)
+if %VER%_%MOD% == 11_CLI (set ARG=%OPT% %CLI%)
+%SOURCES%\WindowsUpdateBox.exe %ARG%
+if %errorlevel% == %restart_application% (call :canary & %SOURCES%\WindowsUpdateBox.exe %ARG%)
+exit /b
+
+:canary
+set C=  `$X='%SOURCES%\hwreqchk.dll'; `$Y='SQ_TpmVersion GTE 1'; `$Z='SQ_TpmVersion GTE 0'; if (test-path `$X) { try { takeown.exe /f `$X /a; icacls.exe `$X /grant *S-1-5-32-544:f; attrib -R -S `$X; [io.file]::OpenWrite(`$X).close() } catch { return }; `$R=[Text.Encoding]::UTF8.GetBytes(`$Z); `$l=`$R.Length; `$i=2; `$w=!1; `$B=[io.file]::ReadAllBytes(`$X); `$H=[BitConverter]::ToString(`$B) -replace '-'; `$S=[BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes(`$Y)) -replace '-'; do { `$i=`$H.IndexOf(`$S, `$i + 2); if (`$i -gt 0) { `$w=!0; for (`$k=0; `$k -lt `$l; `$k++) { `$B[`$k + `$i / 2]=`$R[`$k] } } } until (`$i -lt 1); if (`$w) { [io.file]::WriteAllBytes(`$X, `$B); [GC]::Collect() } }
+if %VER%_%PRE% == 11_ISO powershell -nop -c iex(`$env:C) >nul 2>nul
+exit /b
+"@
+        [System.IO.File]::WriteAllText($get11Path, $get11Content, [System.Text.Encoding]::ASCII)
+        
+        if ($IsOffline) {
+            $softHive = Join-Path $TargetRoot "Windows\System32\config\SOFTWARE"
+            if (Test-Path $softHive) {
+                cmd.exe /c "reg load HKLM\OfflineSOFTWARE `"$softHive`" 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe`" /v UseFilter /t REG_DWORD /d 1 /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v FilterFullPath /t REG_SZ /d `"%SystemDrive%\`$WINDOWS.~BT\Sources\SetupHost.exe`" /f 2>&1" | Out-Null
+                cmd.exe /c "reg.exe add `"HKLM\OfflineSOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe\0`" /v Debugger /t REG_SZ /d `"%SystemDrive%\Scripts\get11.cmd`" /f 2>&1" | Out-Null
+                cmd.exe /c "reg unload HKLM\OfflineSOFTWARE 2>&1" | Out-Null
+            }
+        } else {
+            $ifeoKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\SetupHost.exe"
+            if (-not (Test-Path $ifeoKey)) { New-Item -Path $ifeoKey -Force | Out-Null }
+            Set-ItemProperty -Path $ifeoKey -Name "UseFilter" -Value 1 -Type DWord -Force
+            
+            $ifeoSubKey = Join-Path $ifeoKey "0"
+            if (-not (Test-Path $ifeoSubKey)) { New-Item -Path $ifeoSubKey -Force | Out-Null }
+            Set-ItemProperty -Path $ifeoSubKey -Name "FilterFullPath" -Value "%SystemDrive%\`$WINDOWS.~BT\Sources\SetupHost.exe" -Force
+            Set-ItemProperty -Path $ifeoSubKey -Name "Debugger" -Value "%SystemDrive%\Scripts\get11.cmd" -Force
+        }
+        Write-Log "  [OK] Universal IFEO Kernel Bypass installed (SetupHost.exe debugger -> get11.cmd)." "SUCCESS" Green
+    } catch {
+        Write-Log "  [INFO] AveYo bypass setup note: $_" "INFO" Gray
     }
 }
 
@@ -870,8 +910,9 @@ if ($ResumeStep -le $StepNum) {
         }
 
         if ($applyBypass) {
-            # Zero-touch 0-byte appraiserres.dll staging
+            # Zero-touch 0-byte appraiserres.dll staging & Universal AveYo IFEO Kernel Bypass
             Set-AppraiserBypass -TargetRoot $TargetDrive
+            Install-AveYoBypass -TargetRoot $TargetDrive -IsOffline $IsOffline
             if ($IsOffline) {
                 Write-Log "  [ACTION] Loading offline SYSTEM registry hive ($TargetDrive\Windows\System32\config\SYSTEM)..." "INFO" Gray;
                 $sysHive = "$TargetDrive\Windows\System32\config\SYSTEM"
@@ -2614,13 +2655,7 @@ if ($IsOffline) {
 
             if ($isoDrive) {
                 Set-AppraiserBypass -TargetRoot "$($env:SystemDrive)\"
-                $usbAppraiser = "${isoDrive}:\sources\appraiserres.dll"
-                if (Test-Path $usbAppraiser) {
-                    try {
-                        [System.IO.File]::WriteAllBytes($usbAppraiser, @())
-                        Write-Log "  [OK] Replaced setup media appraiserres.dll with 0-byte bypass." "SUCCESS" Green
-                    } catch {}
-                }
+                Install-AveYoBypass -TargetRoot "$($env:SystemDrive)\"
                 $setupPath = "${isoDrive}:\setup.exe";
                 $setupArgs = "/DynamicUpdate Disable /Compat IgnoreWarning";
                 $manualCmd = "`"$setupPath`" $setupArgs";
@@ -2675,6 +2710,8 @@ if ($IsOffline) {
             }
 
             if ($isoDrive) {
+                Set-AppraiserBypass -TargetRoot "$($env:SystemDrive)\"
+                Install-AveYoBypass -TargetRoot "$($env:SystemDrive)\"
                 $setupPath = "${isoDrive}:\setup.exe";
                 $setupArgs = "/DynamicUpdate Disable";
                 $manualCmd = "`"$setupPath`" $setupArgs";
@@ -2714,6 +2751,8 @@ if ($IsOffline) {
             }
 
             if ($isoDrive) {
+                Set-AppraiserBypass -TargetRoot "$($env:SystemDrive)\"
+                Install-AveYoBypass -TargetRoot "$($env:SystemDrive)\"
                 $setupPath = "${isoDrive}:\setup.exe";
                 $setupArgs = "/Auto Upgrade /DynamicUpdate Disable /Compat IgnoreWarning";
                 $manualCmd = "`"$setupPath`" $setupArgs";
