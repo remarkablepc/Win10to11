@@ -16,6 +16,14 @@
   </a>
 </p>
 
+```text
+ __        ___       _  ___  _        _ _ 
+ \ \      / (_)_ __ / |/ _ \ | |_ ___ / / |
+  \ \ /\ / /| | '_ \| | | | || __/ _ \| | |
+   \ V  V / | | | | | | |_| || || (_) | | |
+    \_/\_/  |_|_| |_|_|\___/  \__\___/|_|_|
+```
+
 # Win10to11
 ### *A practical PowerShell toolkit to diagnose, repair, and prepare stubborn Windows 10 PCs for Windows 11 upgrades (v1.0.0-beta).*
 **Engineered by [RemarkablePC](https://github.com/remarkablepc) to dramatically increase first-pass upgrade success rates on live host machines and offline USB-docked drives.**
@@ -58,7 +66,7 @@ Instead of waiting an hour for Windows Setup to crash and sifting through crypti
 | Environment / Hardware | Failure Symptom | Underlying Root Cause | Win10to11 Action & Outcome |
 | :--- | :--- | :--- | :--- |
 | **Dell Latitude (Workstation SSD)** | Rollback at SafeOS (`0x801F0005` / `0x80070714`) | Uninstalled Avast left active kernel minifilters (`aswSnx.sys`, Altitude 137600) and disk `UpperFilter` (`aswArDisk`) blocking SafeOS WIM reparse queries. | Automatically unhooked filter services, sanitized class `UpperFilters` to `partmgr`. **In-place upgrade succeeded.** |
-| **Acer Laptop (TERRY-LAPTOP SSD)** | Compatibility Scan Abort (`0x80070003`) | Disabled WinRE and corrupted `GetSystemVolumeNtPath` system partition resolution in `CFreeSystemPartitionDiskSpaceChecker`. | Purged corrupted `$WINDOWS.~BT` cache, validated ESP BCD store, and re-registered/enabled offline WinRE image pointer. **Readiness score restored to 100%.** |
+| **Acer Aspire E1-731 (Legacy BIOS / SSD)** | TPM 2.0 & Secure Boot hard blocks; unbootable on UEFI/GPT attempt | 2012 Legacy BIOS lacks stable UEFI NVRAM; SetupHost evaluated stale unpatched OEM appraisal cache. | Detected legacy platform advisory, preserved native MBR cold-boot, purged Panther cache, applied AveYo V13 kernel IFEO interceptor & launched directly from mounted ISO without C:\ extraction. **Windows 11 upgrade installed cleanly.** |
 | **HP EliteDesk (Enterprise PC)** | Pre-Finalize Crash (`0x80070714`) | Missing or damaged `Winre.wim` and broken partition GUID in `ReAgent.xml`. | Auto-detected mounted ISO, unpacked clean `Winre.wim` in ~15s, re-indexed recovery environment. **Upgrade completed.** |
 | **Lenovo ThinkCentre (Docked Drive)** | Blocked by Legacy MBR partition style | Drive connected via USB bench dock; Windows native `mbr2gpt` cannot convert secondary or external disks. | Verified BitLocker status, executed safe dry-run test, created binary MBR backup, converted to GPT via `gptgen`, staged ESP + BCD. **Booted UEFI and upgraded.** |
 
