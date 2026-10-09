@@ -2558,6 +2558,8 @@ if ($IsOffline) {
         ":found_after_mount",
         "if defined SETUP_PATH (",
         "    echo Found Windows Setup media at: %SETUP_PATH%",
+        "    echo Activating real-time appraiser zero-byte neutralizer...",
+        "    start `"`" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"$p = \`"`$env:SystemDrive\\`$WINDOWS.~BT\\Sources\\appraiserres.dll\`"; for (`$i=0; `$i -lt 300; `$i++) { if (Test-Path `$p) { if ((Get-Item `$p).Length -gt 0) { attrib -h -s -r `$p 2>`$null; Clear-Content -Path `$p -Force 2>`$null; attrib +r `$p 2>`$null } }; Start-Sleep -Milliseconds 400 }`"",
         "    echo Launching upgrade with: /DynamicUpdate Disable /Compat IgnoreWarning ...",
         "    echo.",
         "    `"%SETUP_PATH%`" /DynamicUpdate Disable /Compat IgnoreWarning",
@@ -2633,6 +2635,21 @@ if ($IsOffline) {
                 Write-Host "`nPowerShell:" -ForegroundColor Cyan;
                 Write-Host "  $manualPs" -ForegroundColor White;
                 Write-Host "==================================================`n" -ForegroundColor Green;
+
+                Write-Log "  [ACTION] Activating real-time appraiser zero-byte neutralizer..." "INFO" Yellow
+                Start-Job -ScriptBlock {
+                    $p = "$env:SystemDrive\`$WINDOWS.~BT\Sources\appraiserres.dll"
+                    for ($i = 0; $i -lt 300; $i++) {
+                        if (Test-Path $p) {
+                            if ((Get-Item $p).Length -gt 0) {
+                                attrib -h -s -r $p 2>$null
+                                Clear-Content -Path $p -Force 2>$null
+                                attrib +r $p 2>$null
+                            }
+                        }
+                        Start-Sleep -Milliseconds 400
+                    }
+                } | Out-Null
 
                 Write-Log "Launching: $manualCmd" "INFO" Cyan;
                 try {
