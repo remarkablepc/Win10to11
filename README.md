@@ -159,6 +159,9 @@ Here is an example of what running `Win10to11` on a bench target looks like in t
 * **Non-Destructive MBR-to-GPT Conversion with Safety Rails**:
   * *Live Host:* Runs validated `mbr2gpt.exe /convert /disk:N /allowFullOS`.
   * *Offline Dock:* Performs an active **BitLocker pre-check** to prevent partition corruption on encrypted drives. Prompts to download open-source `gptgen` on-demand from GitHub, executes a read-only dry run, auto-shrinks partition space if needed, saves a binary `.bin` MBR backup, and guides EFI System Partition (ESP) & BCD creation.
+* **Automated UEFI Bootloader & BCD Repair**:
+  * Unconditionally recreates a pristine UEFI bootloader and BCD store via `bcdboot`, stages universal fallback `bootx64.efi` for strict OEM BIOSes (Acer, Lenovo, HP), and explicitly binds `{bootmgr}` and `{default}` partition device pointers to prevent boot loops and `0x80070003` (`CFreeSystemPartitionDiskSpaceChecker`) setup crashes.
+  * Safely unmounts and removes conflicting drive letters from orphaned legacy MBR partitions on converted GPT disks.
 * **Health Check Caching**:
   * Includes `-SkipHealthChecks` and 24-hour verification markers to eliminate redundant 30-minute SFC/DISM re-scans during iterative bench testing.
 

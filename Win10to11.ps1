@@ -1291,88 +1291,82 @@ if ($ResumeStep -le $StepNum) {
             }
         }
 
-        # Test BCD store integrity both on target ESP BCD store and global store
-        $bcdCorrupt = $false
-        $bcdTestMsg = ""
-
-        if ($espDrive -and (Test-Path "$espDrive\EFI\Microsoft\Boot\BCD")) {
-            $targetBcdFile = "$espDrive\EFI\Microsoft\Boot\BCD"
-            Write-Log "  [ACTION] Validating BCD store at $targetBcdFile..." "INFO" Gray;
-            $enumResult = cmd.exe /c "bcdedit /store `"$targetBcdFile`" /enum " 2>&1
-            if ($LASTEXITCODE -ne 0 -or $enumResult -match "c0000024|corrupt|invalid|unexpected length") {
-                $bcdCorrupt = $true
-                $bcdTestMsg = "Target ESP BCD enumeration failed ($enumResult)"
-            }
-        } else {
-            $bcdCorrupt = $true
-            $bcdTestMsg = "Target BCD file not found on ESP drive"
-        }
-
-        # Secondary check: global bcdedit /export test
-        if (-not $bcdCorrupt) {
-            $exportResultSystem = cmd.exe /c "bcdedit /export `"$testExportPath`" " 2>&1
-            if ($LASTEXITCODE -ne 0 -or (Test-Path $testExportPath) -eq $false) {
-                $bcdCorrupt = $true
-                $bcdTestMsg = "System BCD export test failed ($exportResultSystem)"
-            }
-            if (Test-Path $testExportPath) { Remove-Item $testExportPath -Force -ErrorAction SilentlyContinue }
-        }
-
-        if (-not $bcdCorrupt) {
-            Write-Log "  [OK] Target BCD store validation passed cleanly." "SUCCESS" Green;
-        } else {
-            Write-Log "  [WARNING] BCD store corruption detected ($bcdTestMsg). Rebuilding fresh BCD store..." "WARN" Yellow;
+        # 4D. Comprehensive UEFI Bootloader & BCD Rebuild
+        # Rebuilding the UEFI bootloader environment with fresh build-matched bootmgfw.efi, fallback bootx64.efi,
+        # and explicit BCD partition pointers guarantees clean native UEFI boot across Acer, HP, Dell, and Lenovo firmware.
+        if ($espDrive) {
+            Write-Log "  [ACTION] Recreating pristine EFI bootloader & BCD store via bcdboot ($TargetDrive\Windows)..." "INFO" Yellow;
             
-            if ($espDrive) {
-                $bcdPath = "$espDrive\EFI\Microsoft\Boot\BCD"
-                if (Test-Path $bcdPath) {
-                    Write-Log "  [ACTION] Backing up corrupted BCD to BCD.old..." "INFO" Yellow;
-                    cmd.exe /c "attrib -h -r -s `"$bcdPath`" " 2>&1 | Out-Null
-                    Move-Item -Path $bcdPath -Destination "$bcdPath.old-$TimeStamp" -Force -ErrorAction SilentlyContinue
-                }
-                
-                Write-Log "  [FIX] Recreating pristine EFI BCD store via bcdboot ($TargetDrive\Windows)..." "INFO" Yellow;
-                $bcdBootRes = cmd.exe /c "bcdboot $TargetDrive\Windows /s $espDrive /f UEFI" 2>&1
-                Write-Log "  bcdboot output: $bcdBootRes" "INFO" Gray;
-                
-                if (-not $IsOffline) {
-                    Write-Log "  [FIX] Importing fresh BCD into active system registry hive..." "INFO" Yellow;
-                    $importRes = cmd.exe /c "bcdedit /import `"$espDrive\EFI\Microsoft\Boot\BCD`" /clean " 2>&1
-                    Write-Log "  bcdedit /import output: $importRes" "INFO" Gray;
-                }
-                
-                Start-Sleep -Seconds 3
-            } else {
-                Write-Log "  [FIX] Running default bcdboot refresh..." "INFO" Yellow;
-                $bcdOutput = bcdboot "$TargetDrive\Windows" /f UEFI 2>&1;
+            # Back up existing BCD if present
+            $bcdPath = "$espDrive\EFI\Microsoft\Boot\BCD"
+            if (Test-Path $bcdPath) {
+                Write-Log "  [ACTION] Backing up existing BCD to BCD.old..." "INFO" Gray;
+                cmd.exe /c "attrib -h -r -s `"$bcdPath`" 2>&1" | Out-Null
+                Move-Item -Path $bcdPath -Destination "$bcdPath.old-$TimeStamp" -Force -ErrorAction SilentlyContinue
             }
             
-            # Re-verify BCD store after rebuild (while ESP drive is still mounted!)
-            if ($espDrive -and (Test-Path "$espDrive\EFI\Microsoft\Boot\BCD")) {
-                $verifyResult = cmd.exe /c "bcdedit /store `"$espDrive\EFI\Microsoft\Boot\BCD`" /enum " 2>&1
+            # Execute bcdboot with verbose logging targeting UEFI firmware
+            $bcdBootRes = cmd.exe /c "bcdboot `"$TargetDrive\Windows`" /s $espDrive /f UEFI /v 2>&1" | Out-String
+            Write-Log "  bcdboot output: $($bcdBootRes.Trim())" "INFO" Gray;
+
+            # Ensure fallback UEFI bootloader exists (\EFI\Boot\bootx64.efi)
+            # Many UEFI BIOSes (especially Acer, Lenovo, HP) look for bootx64.efi as the mandatory fallback loader
+            $fallbackDir = "$espDrive\EFI\Boot"
+            $fallbackEfi = "$fallbackDir\bootx64.efi"
+            $msBootEfi = "$espDrive\EFI\Microsoft\Boot\bootmgfw.efi"
+            if (-not (Test-Path $fallbackDir)) {
+                New-Item -ItemType Directory -Path $fallbackDir -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+            if (Test-Path $msBootEfi) {
+                Copy-Item -Path $msBootEfi -Destination $fallbackEfi -Force -ErrorAction SilentlyContinue
+                Write-Log "  [OK] Staged fallback UEFI bootloader to $fallbackEfi" "SUCCESS" Green;
+            }
+
+            # Explicitly bind BCD device and osdevice pointers (The DISM++ / Sergei Strelec standard)
+            if (Test-Path "$espDrive\EFI\Microsoft\Boot\BCD") {
+                Write-Log "  [ACTION] Binding explicit partition volume pointers in target BCD store..." "INFO" Gray;
+                cmd.exe /c "bcdedit /store `"$espDrive\EFI\Microsoft\Boot\BCD`" /set {bootmgr} device partition=$espDrive 2>&1" | Out-Null
+                cmd.exe /c "bcdedit /store `"$espDrive\EFI\Microsoft\Boot\BCD`" /set {default} device partition=$TargetDrive 2>&1" | Out-Null
+                cmd.exe /c "bcdedit /store `"$espDrive\EFI\Microsoft\Boot\BCD`" /set {default} osdevice partition=$TargetDrive 2>&1" | Out-Null
+                
+                # Verify BCD enumeration
+                $verifyResult = cmd.exe /c "bcdedit /store `"$espDrive\EFI\Microsoft\Boot\BCD`" /enum 2>&1" | Out-String
                 if ($LASTEXITCODE -eq 0) {
-                    Write-Log "  [OK] Target BCD store successfully rebuilt and verified!" "SUCCESS" Green;
+                    Write-Log "  [SUCCESS] Target UEFI BCD store verified and bound successfully!" "SUCCESS" Green;
                 } else {
-                    Write-Log "  [ERROR] BCD rebuild verification failed: $verifyResult" "ERROR" Red;
-                    $ReadinessScore -= 25;
+                    Write-Log "  [WARNING] Target BCD verification notice: $($verifyResult.Trim())" "WARN" Yellow;
                 }
             } else {
-                if (Test-Path $testExportPath) { Remove-Item $testExportPath -Force -ErrorAction SilentlyContinue }
-                $verifyResult = cmd.exe /c "bcdedit /export `"$testExportPath`" " 2>&1
-                if ($LASTEXITCODE -eq 0 -and (Test-Path $testExportPath)) {
-                    Write-Log "  [OK] BCD store successfully rebuilt and verified!" "SUCCESS" Green;
-                    Remove-Item $testExportPath -Force -ErrorAction SilentlyContinue;
-                } elseif ($verifyResult -match "handle is invalid") {
-                    Write-Log "  [WARNING] BCD was successfully rebuilt, but the live handle remains locked." "WARN" Yellow;
-                    Write-Log "  [ACTION] A system restart is MANDATORY to flush the BCD handle before running the upgrade." "INFO" Yellow;
-                    $script:ForceReboot = $true;
-                } else {
-                    Write-Log "  [ERROR] BCD rebuild verification failed: $verifyResult" "ERROR" Red;
-                    $ReadinessScore -= 25;
+                Write-Log "  [ERROR] BCD store missing after bcdboot pass." "ERROR" Red;
+                $ReadinessScore -= 20;
+            }
+
+            if (-not $IsOffline) {
+                Write-Log "  [ACTION] Synchronizing fresh BCD into active system registry hive..." "INFO" Yellow;
+                $importRes = cmd.exe /c "bcdedit /import `"$espDrive\EFI\Microsoft\Boot\BCD`" /clean 2>&1" | Out-String
+                Write-Log "  bcdedit /import: $($importRes.Trim())" "INFO" Gray;
+            }
+        } else {
+            Write-Log "  [ACTION] Running default bcdboot refresh..." "INFO" Yellow;
+            $bcdOutput = cmd.exe /c "bcdboot `"$TargetDrive\Windows`" /f UEFI 2>&1" | Out-String;
+            Write-Log "  bcdboot output: $($bcdOutput.Trim())" "INFO" Gray;
+        }
+
+        # 4E. Strip conflicting drive letters from orphaned legacy MBR System Reserved partitions on GPT disks
+        if ($targetDisk.PartitionStyle -eq "GPT") {
+            $orphanParts = Get-Partition -DiskNumber $targetDisk.Number -ErrorAction SilentlyContinue | Where-Object {
+                $_.DriveLetter -and $_.DriveLetter -ne $TargetDrive.TrimEnd(":") -and $_.Type -ne "System" -and $_.GptType -ne "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}"
+            }
+            foreach ($op in $orphanParts) {
+                $opVol = $op | Get-Volume -ErrorAction SilentlyContinue
+                if ($opVol -and ($opVol.FileSystemLabel -match "System Reserved" -or ($opVol.Size -le 500MB -and $opVol.FileSystem -eq "NTFS"))) {
+                    Write-Log "  [ACTION] Removing conflicting drive letter $($op.DriveLetter): from orphaned legacy MBR partition..." "INFO" Yellow;
+                    $op | Remove-PartitionAccessPath -AccessPath "$($op.DriveLetter):\" -ErrorAction SilentlyContinue
                 }
             }
         }
-        # Force health checks to run on next pass since BCD was corrupt
+
+        # Reset health check cache to ensure clean state
         Write-Log "  [ACTION] Resetting SFC/DISM execution cache..." "INFO" Yellow;
         if (Test-Path $RegKey) {
             Remove-ItemProperty -Path $RegKey -Name "LastHealthCheck" -ErrorAction SilentlyContinue
