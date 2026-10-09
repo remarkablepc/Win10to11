@@ -827,13 +827,17 @@ if ($ResumeStep -le $StepNum) {
             }
         }
         
+        $fwAdv = Get-FirmwareAdvisory -Profile $script:TargetProfile
         if ($fwType -eq 2) {
             Write-Log "  [OK] Target system (or disk) is configured for UEFI mode." "SUCCESS" Green;
         } elseif ($fwType -eq 1) {
-            Write-Log "  [WARNING] Target system (or disk) is configured for Legacy BIOS (MBR)! Win11 requires UEFI/GPT." "WARN" Red;
-            $ReadinessScore -= 30;
+            if ($fwAdv.IsLegacyOnly) {
+                Write-Log "  [OK] Legacy BIOS platform detected ($($script:TargetProfile.Manufacturer) $($script:TargetProfile.BIOSVersion)). Windows 11 will upgrade cleanly in native MBR mode via staged bypasses." "SUCCESS" Green;
+            } else {
+                Write-Log "  [INFO] Target system is running in Legacy BIOS (MBR) mode. (Upgrades natively on MBR via bypasses)." "INFO" Cyan;
+            }
         } else {
-            Write-Log "  [INFO] Firmware mode undetermined (assuming UEFI)." "INFO" Gray;
+            Write-Log "  [INFO] Firmware mode undetermined." "INFO" Gray;
         }
     } catch {
         Write-Log "  [INFO] Could not query firmware type: $_" "INFO" Gray;
@@ -1048,25 +1052,32 @@ if ($ResumeStep -le $StepNum) {
         # 4A. MBR-to-GPT Conversion Check & Execution
         if ($targetDisk.PartitionStyle -eq "MBR") {
             $fwAdv = Get-FirmwareAdvisory -Profile $script:TargetProfile
-            Write-Host "`n==================================================" -ForegroundColor Yellow
-            Write-Host "         DISK PARTITION STYLE IS MBR             " -ForegroundColor Yellow
-            Write-Host "==================================================" -ForegroundColor Yellow
-            Write-Host "Target Disk: Disk $($targetDisk.Number) ($($targetDisk.FriendlyName))" -ForegroundColor Cyan
-            Write-Host "Total Size: $([math]::Round($targetDisk.Size/1GB, 2)) GB | Partition Style: MBR" -ForegroundColor Cyan
+            $mbrAction = $null
 
             if ($fwAdv.IsLegacyOnly) {
-                Write-Host "`n⚠️  [FIRMWARE WARNING] $($fwAdv.Warning)" -ForegroundColor Red
-                Write-Host "💡  [RECOMMENDED] $($fwAdv.Guidance)" -ForegroundColor Yellow
+                Write-Host "`n==================================================" -ForegroundColor Green
+                Write-Host "   LEGACY BIOS DETECTED -- PRESERVING MBR BOOT    " -ForegroundColor Green
+                Write-Host "==================================================" -ForegroundColor Green
+                Write-Host "Target Disk: Disk $($targetDisk.Number) ($($targetDisk.FriendlyName)) | Style: MBR" -ForegroundColor Cyan
+                Write-Host "Platform   : $($script:TargetProfile.Manufacturer) $($script:TargetProfile.Model) ($($script:TargetProfile.BIOSVersion))" -ForegroundColor Cyan
+                Write-Host "Notice     : Motherboard is Pure Legacy BIOS. GPT conversion is blocked to prevent an unbootable PC." -ForegroundColor Yellow
+                Write-Host "Action     : Keeping MBR partition style and maintaining native BIOS bootloader." -ForegroundColor Green
+                Write-Log "  [INFO] Legacy-only hardware detected. Automatically keeping MBR and bypassing GPT conversion." "INFO" Green
+                $mbrAction = "2"
+            } else {
+                Write-Host "`n==================================================" -ForegroundColor Yellow
+                Write-Host "         DISK PARTITION STYLE IS MBR             " -ForegroundColor Yellow
+                Write-Host "==================================================" -ForegroundColor Yellow
+                Write-Host "Target Disk: Disk $($targetDisk.Number) ($($targetDisk.FriendlyName))" -ForegroundColor Cyan
+                Write-Host "Total Size: $([math]::Round($targetDisk.Size/1GB, 2)) GB | Partition Style: MBR" -ForegroundColor Cyan
+                Write-Host "`nPartition Style & Boot Mode Options:" -ForegroundColor Cyan
+                Write-Host "  [1] Convert MBR to GPT (Recommended for UEFI-capable PCs)" -ForegroundColor White
+                Write-Host "  [2] Keep MBR & Configure Legacy BIOS Bootloader" -ForegroundColor White
+                Write-Host "  [Q] Quit / Cancel" -ForegroundColor White
+
+                $mbrAction = Read-Host "`nSelect an option [1, 2, Q] (Default: 1)"
+                if ($mbrAction -eq "") { $mbrAction = "1" }
             }
-
-            Write-Host "`nPartition Style & Boot Mode Options:" -ForegroundColor Cyan
-            Write-Host "  [1] Convert MBR to GPT (Recommended for UEFI-capable PCs)" -ForegroundColor White
-            Write-Host "  [2] Keep MBR & Configure Legacy BIOS Bootloader (Recommended for Legacy-only PCs / Acer V1.xx)" -ForegroundColor $(if($fwAdv.IsLegacyOnly){'Green'}else{'White'})
-            Write-Host "  [Q] Quit / Cancel" -ForegroundColor White
-
-            $defaultChoice = if ($fwAdv.IsLegacyOnly) { "2" } else { "1" }
-            $mbrAction = Read-Host "`nSelect an option [1, 2, Q] (Default: $defaultChoice)"
-            if ($mbrAction -eq "") { $mbrAction = $defaultChoice }
 
             if ($mbrAction -eq "2") {
                 Write-Log "  [ACTION] Technician chose to KEEP MBR partition style for Legacy BIOS boot." "INFO" Yellow
