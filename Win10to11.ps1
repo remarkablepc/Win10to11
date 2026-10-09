@@ -367,6 +367,55 @@ function Get-TargetSystemProfile {
     return $profile
 }
 
+function Get-FirmwareAdvisory {
+    param([PSCustomObject]$Profile)
+    $advisory = [PSCustomObject]@{
+        Status       = "Standard"
+        IsLegacyOnly = $false
+        Warning      = $null
+        PortalUrl    = $null
+        Guidance     = "System firmware appears modern and capable of UEFI."
+    }
+    if (-not $Profile) { return $advisory }
+
+    $mfg = "$($Profile.Manufacturer) $($Profile.Model)"
+    $biosVer = "$($Profile.BIOSVersion)"
+
+    # 1. Acer V1.xx vs V2.xx Trap Check
+    if (($mfg -match "Acer|Gateway|Packard Bell" -or $Profile.Model -match "Aspire|TravelMate|Extensa") -and ($biosVer -match "^V?1\.")) {
+        $advisory.Status = "CRITICAL_LEGACY_TRAP"
+        $advisory.IsLegacyOnly = $true
+        $advisory.Warning = "Acer V1.xx Pure Legacy BIOS detected ($biosVer). Acer V2.xx (UEFI) updates are strictly for factory Win8 motherboards. Flashing V2 onto V1 will fail or permanently BRICK the board."
+        $advisory.Guidance = "DO NOT flash V2.xx BIOS and DO NOT convert disk to GPT! Keep MBR partition style. Windows 11 installs and boots natively on MBR with staged bypasses."
+        $advisory.PortalUrl = "https://www.acer.com/us-en/support"
+        return $advisory
+    }
+
+    # 2. Pre-2014 Legacy BIOS Check
+    $yearMatch = [regex]::Match($Profile.BIOSDate, "(\b200\d|\b201[0-3])")
+    if ($yearMatch.Success -or $Profile.FirmwareMode -eq "Legacy" -or $Profile.FirmwareMode -eq "BIOS") {
+        $advisory.Status = "LEGACY_PLATFORM"
+        $advisory.IsLegacyOnly = $true
+        $advisory.Warning = "Pre-UEFI / Legacy BIOS platform detected (BIOS Date: $($Profile.BIOSDate))."
+        $advisory.Guidance = "Manufacturer BIOS support has ended. BIOS updates will not add UEFI/Secure Boot to this motherboard generation. Recommend MBR boot mode with Windows 11 bypasses."
+    }
+
+    # Vendor Support Portals
+    if ($mfg -match "Dell") {
+        $advisory.PortalUrl = "https://www.dell.com/support/home/drivers"
+    } elseif ($mfg -match "HP|Hewlett-Packard") {
+        $advisory.PortalUrl = "https://support.hp.com/us-en/drivers"
+    } elseif ($mfg -match "Lenovo") {
+        $advisory.PortalUrl = "https://pcsupport.lenovo.com/"
+    } elseif ($mfg -match "ASUS|ASUSTeK") {
+        $advisory.PortalUrl = "https://www.asus.com/support/"
+    } elseif ($mfg -match "Acer") {
+        $advisory.PortalUrl = "https://www.acer.com/us-en/support"
+    }
+
+    return $advisory
+}
+
 # Helper function to auto-detect or mount the Windows 11 ISO
 function Get-MountedSetupDrive {
     # 1. Check if an ISO or USB is already mounted with setup.exe and sources
@@ -610,6 +659,13 @@ if (-not $IsOffline) {
     Write-Log "  Secure Boot         : $($script:TargetProfile.SecureBootStatus)" "INFO" White
 }
 Write-Log "  BIOS Version / Date : $($script:TargetProfile.BIOSVersion) ($($script:TargetProfile.BIOSDate))" "INFO" White
+$fwAdv = Get-FirmwareAdvisory -Profile $script:TargetProfile
+if ($fwAdv.Warning) {
+    Write-Log "  Firmware Advisory   : $($fwAdv.Warning)" "WARN" Yellow
+}
+if ($fwAdv.PortalUrl) {
+    Write-Log "  Vendor Support URL  : $($fwAdv.PortalUrl)" "INFO" Cyan
+}
 Write-Log "  Installed Windows   : $($script:TargetProfile.OSCaption) $($script:TargetProfile.OSBuild)" "INFO" White
 Write-Log "  Partition Layout    : $($script:TargetProfile.PartitionStyle)" "INFO" White
 Write-Host "====================================================================`n" -ForegroundColor Cyan
@@ -971,15 +1027,63 @@ if ($ResumeStep -le $StepNum) {
 
         # 4A. MBR-to-GPT Conversion Check & Execution
         if ($targetDisk.PartitionStyle -eq "MBR") {
+            $fwAdv = Get-FirmwareAdvisory -Profile $script:TargetProfile
             Write-Host "`n==================================================" -ForegroundColor Yellow
-            Write-Host "   MBR-TO-GPT CONVERSION REQUIRED FOR WINDOWS 11   " -ForegroundColor Yellow
+            Write-Host "         DISK PARTITION STYLE IS MBR             " -ForegroundColor Yellow
             Write-Host "==================================================" -ForegroundColor Yellow
-            Write-Host "Windows 11 requires UEFI boot mode, which requires a GPT disk style." -ForegroundColor White
             Write-Host "Target Disk: Disk $($targetDisk.Number) ($($targetDisk.FriendlyName))" -ForegroundColor Cyan
             Write-Host "Total Size: $([math]::Round($targetDisk.Size/1GB, 2)) GB | Partition Style: MBR" -ForegroundColor Cyan
 
-            # ── BitLocker Safety Check ──
-            Write-Log "  [ACTION] Checking BitLocker encryption status on $TargetDrive..." "INFO" Gray
+            if ($fwAdv.IsLegacyOnly) {
+                Write-Host "`n⚠️  [FIRMWARE WARNING] $($fwAdv.Warning)" -ForegroundColor Red
+                Write-Host "💡  [RECOMMENDED] $($fwAdv.Guidance)" -ForegroundColor Yellow
+            }
+
+            Write-Host "`nPartition Style & Boot Mode Options:" -ForegroundColor Cyan
+            Write-Host "  [1] Convert MBR to GPT (Recommended for UEFI-capable PCs)" -ForegroundColor White
+            Write-Host "  [2] Keep MBR & Configure Legacy BIOS Bootloader (Recommended for Legacy-only PCs / Acer V1.xx)" -ForegroundColor $(if($fwAdv.IsLegacyOnly){'Green'}else{'White'})
+            Write-Host "  [Q] Quit / Cancel" -ForegroundColor White
+
+            $defaultChoice = if ($fwAdv.IsLegacyOnly) { "2" } else { "1" }
+            $mbrAction = Read-Host "`nSelect an option [1, 2, Q] (Default: $defaultChoice)"
+            if ($mbrAction -eq "") { $mbrAction = $defaultChoice }
+
+            if ($mbrAction -eq "2") {
+                Write-Log "  [ACTION] Technician chose to KEEP MBR partition style for Legacy BIOS boot." "INFO" Yellow
+                Write-Host "`nConfiguring native Legacy BIOS bootloader on Disk $($targetDisk.Number)..." -ForegroundColor Cyan
+                
+                $parts = Get-Partition -DiskNumber $targetDisk.Number -ErrorAction SilentlyContinue | Sort-Object PartitionNumber
+                $activePart = $parts | Where-Object { $_.IsActive } | Select-Object -First 1
+                if (-not $activePart) {
+                    $activePart = $parts | Where-Object { $_.PartitionNumber -eq 1 -or $_.Size -lt 1GB } | Select-Object -First 1
+                    if ($activePart) {
+                        Write-Log "  [ACTION] Marking Partition $($activePart.PartitionNumber) as Active..." "INFO" Yellow
+                        cmd.exe /c "echo select disk $($targetDisk.Number) & echo select partition $($activePart.PartitionNumber) & echo active" | diskpart | Out-Null
+                    }
+                }
+                
+                $bootDriveLetter = $null
+                if ($activePart -and $activePart.DriveLetter) {
+                    $bootDriveLetter = "$($activePart.DriveLetter):"
+                } else {
+                    $bootDriveLetter = $TargetDrive
+                }
+                
+                Write-Log "  [ACTION] Installing BIOS bootloader (bootmgr) from $TargetDrive\Windows to $bootDriveLetter..." "INFO" Yellow
+                $bcdRes = cmd.exe /c "bcdboot `"$TargetDrive\Windows`" /s $bootDriveLetter /f BIOS /v 2>&1" | Out-String
+                Write-Log "  bcdboot output: $($bcdRes.Trim())" "INFO" Gray
+                
+                Write-Log "  [ACTION] Stamping NT60 MBR and VBR code..." "INFO" Yellow
+                cmd.exe /c "bootsect.exe /nt60 $bootDriveLetter /force /mbr 2>&1" | Out-Null
+                
+                Write-Log "  [SUCCESS] Legacy BIOS MBR bootloader configured successfully on $bootDriveLetter!" "SUCCESS" Green
+                Write-Host "`n[SUCCESS] Disk $($targetDisk.Number) is primed for native Legacy BIOS boot. Windows 11 will upgrade cleanly on MBR." -ForegroundColor Green
+            } elseif ($mbrAction -match "^[qQ]") {
+                Write-Log "  [QUIT] User cancelled at MBR/GPT choice." "WARN" Red
+                exit
+            } else {
+                # ── BitLocker Safety Check ──
+                Write-Log "  [ACTION] Checking BitLocker encryption status on $TargetDrive..." "INFO" Gray
             try {
                 $bdeOutput = cmd.exe /c "manage-bde.exe -status $TargetDrive 2>&1" | Out-String
                 if ($bdeOutput -match "Protection Status:\s+Protection On" -or $bdeOutput -match "Conversion Status:\s+(?!Fully Decrypted)" -or $bdeOutput -match "Lock Status:\s+Locked") {
@@ -1422,6 +1526,7 @@ if ($ResumeStep -le $StepNum) {
             # Cleanup preview directory
             $previewDir = Join-Path -Path $ScriptDir -ChildPath "gptgen_preview"
             if (Test-Path $previewDir) { Remove-Item $previewDir -Recurse -Force -ErrorAction SilentlyContinue }
+            }
         }
 
         # ── Gate: skip ESP + BCD if disk isn't GPT or if mbr2gpt handled it ──
