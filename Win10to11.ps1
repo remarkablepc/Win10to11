@@ -1269,7 +1269,8 @@ if ($ResumeStep -le $StepNum) {
 
                 # Only prompt for download if strictly needed and not found locally
                 Write-Host "`n[NOTICE] gptgen is required for offline MBR-to-GPT conversion." -ForegroundColor Yellow
-                Write-Host "Official repository: https://github.com/xorangekiller/gptgen (ISC Permissive License)" -ForegroundColor Gray
+                Write-Host "Created by Vladimir Panteleev (ISC Permissive License)." -ForegroundColor Cyan
+                Write-Host "Official repository: https://github.com/xorangekiller/gptgen" -ForegroundColor Gray
                 
                 $dlApproved = $false
                 if ($BypassAll) {
@@ -1300,7 +1301,7 @@ if ($ResumeStep -le $StepNum) {
                         try {
                             Write-Log "  [ACTION] Downloading gptgen from $gptgenUrl..." "INFO" Yellow
                             Invoke-WebRequest -Uri $gptgenUrl -OutFile $gptgenZip -UseBasicParsing -TimeoutSec 30
-                            Write-Log "  [OK] Downloaded gptgen package successfully." "SUCCESS" Green
+                            Write-Log "  [OK] Downloaded gptgen package successfully. Special thanks to Vladimir Panteleev for this utility." "SUCCESS" Green
                             Expand-Archive -Path $gptgenZip -DestinationPath $ScriptDir -Force -ErrorAction SilentlyContinue
                             $foundExe = Get-ChildItem -Path $ScriptDir -Filter "gptgen.exe" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
                             if ($foundExe) { return $foundExe.FullName }
