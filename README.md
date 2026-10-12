@@ -304,6 +304,15 @@ If this script saved you from hours of troubleshooting or helped recover a diffi
 
 ---
 
+## 🙏 Acknowledgments & Upstream Credits
+
+Win10to11 stands on the shoulders of the open-source Windows engineering community:
+* **gptgen** by **Vladimir Panteleev** (and xorangekiller): An exceptional non-destructive MBR-to-GPT partition table generator released under the permissive ISC License. Win10to11 downloads this verified upstream utility on-demand solely with technician consent for offline bench disks.
+* **Universal MediaCreationTool** by **AveYo**: Groundbreaking research on dynamic hardware evaluation bypasses and IFEO setup interceptor logic.
+* **Rufus** by **Pete Batard**: The clean-room standard for dynamic 0-byte setup bypass techniques.
+
+---
+
 ## ⚖️ License
 
 Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for more information.  
