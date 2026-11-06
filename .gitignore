@@ -39,4 +39,12 @@ desktop.ini
 *.conflict
 * ([0-9])*
 * ([0-9]).*
-CHAT_HISTORY.md
+
+# Local Development & Workspace Exclusions
+*.local
+*.local.*
+*history*.md
+*HISTORY*.md
+.gemini/
+.idea/
+.vscode/
